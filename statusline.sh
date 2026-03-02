@@ -105,7 +105,7 @@ out+="${blue}${model_name}${reset}"
 # Current working directory
 cwd=$(echo "$input" | jq -r '.cwd // empty')
 if [ -n "$cwd" ]; then
-    display_dir="${cwd/#$HOME/\~}"
+    display_dir="${cwd##*/}"
     out+=" ${dim}|${reset} "
     out+="${cyan}${display_dir}${reset}"
 fi
