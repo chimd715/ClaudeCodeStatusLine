@@ -66,3 +66,11 @@ Usage data from the Anthropic API is cached for 60 seconds at `/tmp/claude/statu
 ## License
 
 MIT
+
+## Author
+
+Daniel Oliveira
+
+- [Website](https://danielapoliveira.com/)
+- [X](https://x.com/daniel_not_nerd)
+- [LinkedIn](https://www.linkedin.com/in/daniel-ap-oliveira/)
