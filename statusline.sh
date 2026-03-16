@@ -1,5 +1,7 @@
 #!/bin/bash
-# Single line: Model | tokens | %used | %remain | think | 5h bar @reset | 7d bar @reset | extra
+# Two lines:
+#   Line 1: Effort Tokens (Model) | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 2: Dir | Branch changes
 
 set -f  # disable globbing
 
@@ -49,6 +51,24 @@ usage_color() {
     fi
 }
 
+# Generate progress bar
+# Usage: progress_bar <pct> <width> <color>
+progress_bar() {
+    local pct=$1
+    local width=${2:-10}
+    local color=$3
+    local filled=$(( pct * width / 100 ))
+    local empty=$(( width - filled ))
+    local bar=""
+
+    # Build filled portion
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    # Build empty portion
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    printf "${color}${bar}${reset}"
+}
+
 # ===== Extract data from JSON =====
 model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
 
@@ -88,33 +108,45 @@ elif [ -f "$settings_path" ]; then
     [ -n "$effort_val" ] && effort_level="$effort_val"
 fi
 
-# ===== Build single-line output =====
-out=""
-out+="${blue}${model_name}${reset}"
+# ===== Build two-line output =====
+line1=""
+line2=""
 
-# Current working directory
+# Current working directory and git info
 cwd=$(echo "$input" | jq -r '.cwd // empty')
+display_dir=""
+git_branch=""
+git_stat=""
+
 if [ -n "$cwd" ]; then
     display_dir="${cwd##*/}"
     git_branch=$(git -C "${cwd}" rev-parse --abbrev-ref HEAD 2>/dev/null)
-    out+=" ${dim}|${reset} "
-    out+="${cyan}${display_dir}${reset}"
     if [ -n "$git_branch" ]; then
-        out+="${dim}@${reset}${green}${git_branch}${reset}"
         git_stat=$(git -C "${cwd}" diff --numstat 2>/dev/null | awk '{a+=$1; d+=$2} END {if (a+d>0) printf "+%d -%d", a, d}')
-        [ -n "$git_stat" ] && out+=" ${dim}(${reset}${green}${git_stat%% *}${reset} ${red}${git_stat##* }${reset}${dim})${reset}"
     fi
 fi
 
-out+=" ${dim}|${reset} "
-out+="${orange}${used_tokens}/${total_tokens}${reset} ${dim}(${reset}${green}${pct_used}%${reset}${dim})${reset}"
-out+=" ${dim}|${reset} "
-out+="effort: "
+# Line 1: Effort Tokens (Model) | H | W | Extra
 case "$effort_level" in
-    low)    out+="${dim}low${reset}" ;;
-    medium) out+="${orange}med${reset}" ;;
-    *)      out+="${green}high${reset}" ;;
+    low)    line1+="${dim}low${reset} " ;;
+    medium) line1+="${orange}med${reset} " ;;
+    *)      line1+="${green}high${reset} " ;;
 esac
+line1+="${orange}${used_tokens}/${total_tokens}${reset}"
+line1+=" ${dim}(${reset}${blue}${model_name}${reset}${dim})${reset}"
+
+# Line 2: Dir | Branch changes
+if [ -n "$display_dir" ]; then
+    line2+="${cyan}${display_dir}${reset}"
+fi
+
+if [ -n "$git_branch" ]; then
+    [ -n "$display_dir" ] && line2+=" ${dim}|${reset} "
+    line2+="${green}${git_branch}${reset}"
+    if [ -n "$git_stat" ]; then
+        line2+=" ${green}${git_stat%% *}${reset} ${red}${git_stat##* }${reset}"
+    fi
+fi
 
 # ===== Cross-platform OAuth token resolution (from statusline.sh) =====
 # Tries credential sources in order: env var → macOS Keychain → Linux creds file → GNOME Keyring
@@ -267,12 +299,12 @@ format_reset_time() {
             formatted=$(date -j -r "$epoch" +"%H:%M" 2>/dev/null)
             ;;
         datetime)
-            formatted=$(date -d "@$epoch" +"%b %-d, %H:%M" 2>/dev/null) || \
-            formatted=$(date -j -r "$epoch" +"%b %-d, %H:%M" 2>/dev/null)
+            formatted=$(date -d "@$epoch" +"%m/%d %H:%M" 2>/dev/null) || \
+            formatted=$(date -j -r "$epoch" +"%m/%d %H:%M" 2>/dev/null)
             ;;
         *)
-            formatted=$(date -d "@$epoch" +"%b %-d" 2>/dev/null) || \
-            formatted=$(date -j -r "$epoch" +"%b %-d" 2>/dev/null)
+            formatted=$(date -d "@$epoch" +"%m/%d" 2>/dev/null) || \
+            formatted=$(date -j -r "$epoch" +"%m/%d" 2>/dev/null)
             ;;
     esac
     [ -n "$formatted" ] && echo "$formatted"
@@ -287,8 +319,9 @@ if [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>
     five_hour_reset=$(format_reset_time "$five_hour_reset_iso" "time")
     five_hour_color=$(usage_color "$five_hour_pct")
 
-    out+="${sep}${white}5h${reset} ${five_hour_color}${five_hour_pct}%${reset}"
-    [ -n "$five_hour_reset" ] && out+=" ${dim}@${five_hour_reset}${reset}"
+    five_hour_bar=$(progress_bar "$five_hour_pct" 8 "$five_hour_color")
+    line1+="${sep}${five_hour_color}${five_hour_pct}%${reset} ${five_hour_bar} ${white}H${reset}"
+    [ -n "$five_hour_reset" ] && line1+=" ${dim}${five_hour_reset}${reset}"
 
     # ---- 7-day (weekly) ----
     seven_day_pct=$(echo "$usage_data" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
@@ -296,8 +329,9 @@ if [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>
     seven_day_reset=$(format_reset_time "$seven_day_reset_iso" "datetime")
     seven_day_color=$(usage_color "$seven_day_pct")
 
-    out+="${sep}${white}7d${reset} ${seven_day_color}${seven_day_pct}%${reset}"
-    [ -n "$seven_day_reset" ] && out+=" ${dim}@${seven_day_reset}${reset}"
+    seven_day_bar=$(progress_bar "$seven_day_pct" 8 "$seven_day_color")
+    line1+="${sep}${seven_day_color}${seven_day_pct}%${reset} ${seven_day_bar} ${white}W${reset}"
+    [ -n "$seven_day_reset" ] && line1+=" ${dim}${seven_day_reset}${reset}"
 
     # ---- Extra usage ----
     extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
@@ -308,18 +342,19 @@ if [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>
         # Validate: if values are empty or contain unexpanded variables, show simple "enabled" label
         if [ -n "$extra_used" ] && [ -n "$extra_limit" ] && [[ "$extra_used" != *'$'* ]] && [[ "$extra_limit" != *'$'* ]]; then
             extra_color=$(usage_color "$extra_pct")
-            out+="${sep}${white}extra${reset} ${extra_color}\$${extra_used}/\$${extra_limit}${reset}"
+            extra_bar=$(progress_bar "$extra_pct" 6 "$extra_color")
+            line1+="${sep}${extra_color}${extra_pct}%${reset} ${extra_bar} ${white}E${reset} ${dim}\$${extra_used}/\$${extra_limit}${reset}"
         else
-            out+="${sep}${white}extra${reset} ${green}enabled${reset}"
+            line1+="${sep}${white}E${reset} ${green}on${reset}"
         fi
     fi
 else
     # No valid usage data — show placeholders
-    out+="${sep}${white}5h${reset} ${dim}-${reset}"
-    out+="${sep}${white}7d${reset} ${dim}-${reset}"
+    line1+="${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
+    line1+="${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
 fi
 
-# Output single line
-printf "%b" "$out"
+# Output two lines
+printf "%b\n%b" "$line1" "$line2"
 
 exit 0

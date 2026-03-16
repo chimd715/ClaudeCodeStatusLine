@@ -1,4 +1,6 @@
-# Single line: Model | tokens | %used | %remain | think | 5h bar @reset | 7d bar @reset | extra
+# Two lines:
+#   Line 1: Effort Tokens (Model) | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 2: Dir | Branch changes
 
 # Read input from stdin
 $input = @($Input) -join "`n"
@@ -40,6 +42,14 @@ function Get-UsageColor([int]$pct) {
     elseif ($pct -ge 70) { return $orange }
     elseif ($pct -ge 50) { return $yellow }
     else { return $green }
+}
+
+# Generate progress bar
+function Get-ProgressBar([int]$pct, [int]$width = 10, [string]$color) {
+    $filled = [math]::Floor($pct * $width / 100)
+    $empty = $width - $filled
+    $bar = ("█" * $filled) + ("░" * $empty)
+    return "${color}${bar}${reset}"
 }
 
 # Null coalescing helper for PowerShell 5 compatibility (?? is PS7+ only)
@@ -92,22 +102,22 @@ if ($env:CLAUDE_CODE_EFFORT_LEVEL) {
     }
 }
 
-# ===== Build single-line output =====
-$out = ""
-$out += "${blue}${modelName}${reset}"
+# ===== Build two-line output =====
+$line1 = ""
+$line2 = ""
 
-# Current working directory
+# Current working directory and git info
 $cwd = $data.cwd
+$displayDir = ""
+$gitBranch = $null
+$gitStat = ""
+
 if ($cwd) {
     $displayDir = Split-Path $cwd -Leaf
-    $gitBranch = $null
     try {
         $gitBranch = git -C $cwd rev-parse --abbrev-ref HEAD 2>$null
     } catch {}
-    $out += " ${dim}|${reset} "
-    $out += "${cyan}${displayDir}${reset}"
     if ($gitBranch) {
-        $out += "${dim}@${reset}${green}${gitBranch}${reset}"
         try {
             $numstat = git -C $cwd diff --numstat 2>$null
             if ($numstat) {
@@ -118,21 +128,34 @@ if ($cwd) {
                     if ($parts[1] -match '^\d+$') { $deleted += [int]$parts[1] }
                 }
                 if (($added + $deleted) -gt 0) {
-                    $out += " ${dim}(${reset}${green}+${added}${reset} ${red}-${deleted}${reset}${dim})${reset}"
+                    $gitStat = "+${added} -${deleted}"
                 }
             }
         } catch {}
     }
 }
 
-$out += " ${dim}|${reset} "
-$out += "${orange}${usedTokens}/${totalTokens}${reset} ${dim}(${reset}${green}${pctUsed}%${reset}${dim})${reset}"
-$out += " ${dim}|${reset} "
-$out += "effort: "
+# Line 1: Effort Tokens (Model) | H | W | Extra
 switch ($effortLevel) {
-    "low"    { $out += "${dim}low${reset}" }
-    "medium" { $out += "${orange}med${reset}" }
-    default  { $out += "${green}high${reset}" }
+    "low"    { $line1 += "${dim}low${reset} " }
+    "medium" { $line1 += "${orange}med${reset} " }
+    default  { $line1 += "${green}high${reset} " }
+}
+$line1 += "${orange}${usedTokens}/${totalTokens}${reset}"
+$line1 += " ${dim}(${reset}${blue}${modelName}${reset}${dim})${reset}"
+
+# Line 2: Dir | Branch changes
+if ($displayDir) {
+    $line2 += "${cyan}${displayDir}${reset}"
+}
+
+if ($gitBranch) {
+    if ($displayDir) { $line2 += " ${dim}|${reset} " }
+    $line2 += "${green}${gitBranch}${reset}"
+    if ($gitStat) {
+        $parts = $gitStat -split ' '
+        $line2 += " ${green}$($parts[0])${reset} ${red}$($parts[1])${reset}"
+    }
 }
 
 # ===== OAuth token resolution =====
@@ -218,9 +241,9 @@ function Format-ResetTime([string]$isoStr, [string]$style) {
     try {
         $dt = [DateTimeOffset]::Parse($isoStr).LocalDateTime
         switch ($style) {
-            "time"     { return $dt.ToString("h:mmtt").ToLower() }
-            "datetime" { return $dt.ToString("MMM d, h:mmtt").ToLower() }
-            default    { return $dt.ToString("MMM d").ToLower() }
+            "time"     { return $dt.ToString("HH:mm") }
+            "datetime" { return $dt.ToString("MM/dd HH:mm") }
+            default    { return $dt.ToString("MM/dd") }
         }
     } catch { return $null }
 }
@@ -237,8 +260,9 @@ if ($usageData) {
         $fiveHourReset = Format-ResetTime $fiveHourResetIso "time"
         $fiveHourColor = Get-UsageColor $fiveHourPct
 
-        $out += "${sep}${white}5h${reset} ${fiveHourColor}${fiveHourPct}%${reset}"
-        if ($fiveHourReset) { $out += " ${dim}@${fiveHourReset}${reset}" }
+        $fiveHourBar = Get-ProgressBar $fiveHourPct 8 $fiveHourColor
+        $line1 += "${sep}${fiveHourColor}${fiveHourPct}%${reset} ${fiveHourBar} ${white}H${reset}"
+        if ($fiveHourReset) { $line1 += " ${dim}${fiveHourReset}${reset}" }
 
         # ---- 7-day (weekly) ----
         $sevenDayPct = [math]::Floor([double](Coalesce $usage.seven_day.utilization 0))
@@ -246,8 +270,9 @@ if ($usageData) {
         $sevenDayReset = Format-ResetTime $sevenDayResetIso "datetime"
         $sevenDayColor = Get-UsageColor $sevenDayPct
 
-        $out += "${sep}${white}7d${reset} ${sevenDayColor}${sevenDayPct}%${reset}"
-        if ($sevenDayReset) { $out += " ${dim}@${sevenDayReset}${reset}" }
+        $sevenDayBar = Get-ProgressBar $sevenDayPct 8 $sevenDayColor
+        $line1 += "${sep}${sevenDayColor}${sevenDayPct}%${reset} ${sevenDayBar} ${white}W${reset}"
+        if ($sevenDayReset) { $line1 += " ${dim}${sevenDayReset}${reset}" }
 
         # ---- Extra usage ----
         $extraEnabled = $usage.extra_usage.is_enabled
@@ -260,15 +285,20 @@ if ($usageData) {
                 $extraUsed = "{0:F2}" -f ([double]$extraUsedRaw / 100)
                 $extraLimit = "{0:F2}" -f ([double]$extraLimitRaw / 100)
                 $extraColor = Get-UsageColor $extraPct
-                $out += "${sep}${white}extra${reset} ${extraColor}`$${extraUsed}/`$${extraLimit}${reset}"
+                $extraBar = Get-ProgressBar $extraPct 6 $extraColor
+                $line1 += "${sep}${extraColor}${extraPct}%${reset} ${extraBar} ${white}E${reset} ${dim}`$${extraUsed}/`$${extraLimit}${reset}"
             } else {
-                $out += "${sep}${white}extra${reset} ${green}enabled${reset}"
+                $line1 += "${sep}${white}E${reset} ${green}on${reset}"
             }
         }
     } catch {}
+} else {
+    # No valid usage data - show placeholders
+    $line1 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
+    $line1 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
 }
 
-# Output single line
-Write-Host -NoNewline $out
+# Output two lines
+Write-Host "${line1}`n${line2}"
 
 exit 0

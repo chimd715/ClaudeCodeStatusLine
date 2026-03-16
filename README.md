@@ -1,22 +1,30 @@
 # Claude Code Status Line
 
-A custom status line for [Claude Code](https://claude.com/claude-code) that displays model info, token usage, rate limits, and reset times in a single compact line. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
+A custom status line for [Claude Code](https://claude.com/claude-code) that displays model info, token usage, rate limits, and reset times in a compact two-line format. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
 
 ## Screenshot
 
-![Status Line Screenshot](screenshot.png)
+![Status Line Screenshot](screenshot.jpg)
 
 ## What it shows
 
+The status line displays information in two lines:
+
+**Line 1: Usage & Limits**
 | Segment | Description |
 |---------|-------------|
-| **Model** | Current model name (e.g., Opus 4.6) |
-| **CWD@Branch** | Current folder name, git branch, and file changes (+/-) |
-| **Tokens** | Used / total context window tokens (% used) |
 | **Effort** | Reasoning effort level (low, med, high) |
-| **5h** | 5-hour rate limit usage percentage and reset time |
-| **7d** | 7-day rate limit usage percentage and reset time |
-| **Extra** | Extra usage credits spent / limit (if enabled) |
+| **Tokens** | Used / total context window tokens |
+| **Model** | Current model name (e.g., Opus 4.5) |
+| **H** | 5-hour rate limit: percentage, progress bar, and reset time |
+| **W** | Weekly (7-day) rate limit: percentage, progress bar, and reset time |
+| **E** | Extra usage: percentage, progress bar, and credits spent/limit (if enabled) |
+
+**Line 2: Project Info**
+| Segment | Description |
+|---------|-------------|
+| **Dir** | Current working directory name |
+| **Branch** | Git branch name and file changes (+/-) |
 
 Usage percentages are color-coded: green (<50%) → yellow (≥50%) → orange (≥70%) → red (≥90%).
 
