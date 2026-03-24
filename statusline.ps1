@@ -1,6 +1,7 @@
-# Two lines:
-#   Line 1: Effort Tokens (Model) | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
-#   Line 2: Dir | Branch changes
+# Three lines:
+#   Line 1: Model | [GSD Alert |] Current Task
+#   Line 2: Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 3: Dir | Branch changes
 
 # Read input from stdin
 $input = @($Input) -join "`n"
@@ -61,6 +62,7 @@ function Coalesce($value, $default) {
 $data = $input | ConvertFrom-Json
 
 $modelName = if ($data.model.display_name) { $data.model.display_name } else { "Claude" }
+$sessionId = $data.session_id
 
 # Context window
 $size = if ($data.context_window.context_window_size) { [long]$data.context_window.context_window_size } else { 200000 }
@@ -102,9 +104,58 @@ if ($env:CLAUDE_CODE_EFFORT_LEVEL) {
     }
 }
 
-# ===== Build two-line output =====
+# ===== GSD Update Check =====
+$gsdAlert = ""
+$gsdCacheFile = Join-Path $claudeConfigDir "cache\gsd-update-check.json"
+if (Test-Path $gsdCacheFile) {
+    try {
+        $gsdCache = Get-Content $gsdCacheFile -Raw | ConvertFrom-Json
+        if ($gsdCache.update_available -eq $true) {
+            $gsdAlert += "${yellow}⬆ /gsd:update${reset}"
+        }
+        if ($gsdCache.stale_hooks -and $gsdCache.stale_hooks.Count -gt 0) {
+            if ($gsdAlert) { $gsdAlert += " " }
+            $gsdAlert += "${red}⚠ stale hooks${reset}"
+        }
+    } catch {}
+}
+
+# ===== Current Todo Task =====
+$currentTask = ""
+$todosDir = Join-Path $claudeConfigDir "todos"
+if ($sessionId -and (Test-Path $todosDir)) {
+    try {
+        $todoFiles = Get-ChildItem -Path $todosDir -Filter "${sessionId}-agent-*.json" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+        if ($todoFiles) {
+            $todos = Get-Content $todoFiles.FullName -Raw | ConvertFrom-Json
+            $inProgress = $todos | Where-Object { $_.status -eq "in_progress" } | Select-Object -First 1
+            if ($inProgress -and $inProgress.activeForm) {
+                $currentTask = $inProgress.activeForm
+            }
+        }
+    } catch {}
+}
+
+# ===== Build three-line output =====
 $line1 = ""
 $line2 = ""
+$line3 = ""
+
+# Line 1: Model | [GSD Alert |] Current Task
+$line1 += "${dim}${modelName}${reset}"
+if ($gsdAlert) {
+    $line1 += " ${dim}|${reset} ${gsdAlert}"
+}
+if ($currentTask) {
+    # Truncate task if too long (max 50 chars)
+    if ($currentTask.Length -gt 50) {
+        $currentTask = $currentTask.Substring(0, 47) + "..."
+    }
+    $line1 += " ${dim}|${reset} ${white}${currentTask}${reset}"
+}
 
 # Current working directory and git info
 $cwd = $data.cwd
@@ -135,26 +186,25 @@ if ($cwd) {
     }
 }
 
-# Line 1: Effort Tokens (Model) | H | W | Extra
+# Line 2: Effort Tokens | H | W | Extra
 switch ($effortLevel) {
-    "low"    { $line1 += "${dim}low${reset} " }
-    "medium" { $line1 += "${orange}med${reset} " }
-    default  { $line1 += "${green}high${reset} " }
+    "low"    { $line2 += "${dim}low${reset} " }
+    "medium" { $line2 += "${orange}med${reset} " }
+    default  { $line2 += "${green}high${reset} " }
 }
-$line1 += "${orange}${usedTokens}/${totalTokens}${reset}"
-$line1 += " ${dim}(${reset}${blue}${modelName}${reset}${dim})${reset}"
+$line2 += "${orange}${usedTokens}/${totalTokens}${reset}"
 
-# Line 2: Dir | Branch changes
+# Line 3: Dir | Branch changes
 if ($displayDir) {
-    $line2 += "${cyan}${displayDir}${reset}"
+    $line3 += "${cyan}${displayDir}${reset}"
 }
 
 if ($gitBranch) {
-    if ($displayDir) { $line2 += " ${dim}|${reset} " }
-    $line2 += "${green}${gitBranch}${reset}"
+    if ($line3) { $line3 += " ${dim}|${reset} " }
+    $line3 += "${green}${gitBranch}${reset}"
     if ($gitStat) {
         $parts = $gitStat -split ' '
-        $line2 += " ${green}$($parts[0])${reset} ${red}$($parts[1])${reset}"
+        $line3 += " ${green}$($parts[0])${reset} ${red}$($parts[1])${reset}"
     }
 }
 
@@ -261,8 +311,8 @@ if ($usageData) {
         $fiveHourColor = Get-UsageColor $fiveHourPct
 
         $fiveHourBar = Get-ProgressBar $fiveHourPct 8 $fiveHourColor
-        $line1 += "${sep}${fiveHourColor}${fiveHourPct}%${reset} ${fiveHourBar} ${white}H${reset}"
-        if ($fiveHourReset) { $line1 += " ${dim}${fiveHourReset}${reset}" }
+        $line2 += "${sep}${fiveHourColor}${fiveHourPct}%${reset} ${fiveHourBar} ${white}H${reset}"
+        if ($fiveHourReset) { $line2 += " ${dim}${fiveHourReset}${reset}" }
 
         # ---- 7-day (weekly) ----
         $sevenDayPct = [math]::Floor([double](Coalesce $usage.seven_day.utilization 0))
@@ -271,8 +321,8 @@ if ($usageData) {
         $sevenDayColor = Get-UsageColor $sevenDayPct
 
         $sevenDayBar = Get-ProgressBar $sevenDayPct 8 $sevenDayColor
-        $line1 += "${sep}${sevenDayColor}${sevenDayPct}%${reset} ${sevenDayBar} ${white}W${reset}"
-        if ($sevenDayReset) { $line1 += " ${dim}${sevenDayReset}${reset}" }
+        $line2 += "${sep}${sevenDayColor}${sevenDayPct}%${reset} ${sevenDayBar} ${white}W${reset}"
+        if ($sevenDayReset) { $line2 += " ${dim}${sevenDayReset}${reset}" }
 
         # ---- Extra usage ----
         $extraEnabled = $usage.extra_usage.is_enabled
@@ -286,19 +336,19 @@ if ($usageData) {
                 $extraLimit = "{0:F2}" -f ([double]$extraLimitRaw / 100)
                 $extraColor = Get-UsageColor $extraPct
                 $extraBar = Get-ProgressBar $extraPct 6 $extraColor
-                $line1 += "${sep}${extraColor}${extraPct}%${reset} ${extraBar} ${white}E${reset} ${dim}`$${extraUsed}/`$${extraLimit}${reset}"
+                $line2 += "${sep}${extraColor}${extraPct}%${reset} ${extraBar} ${white}E${reset} ${dim}`$${extraUsed}/`$${extraLimit}${reset}"
             } else {
-                $line1 += "${sep}${white}E${reset} ${green}on${reset}"
+                $line2 += "${sep}${white}E${reset} ${green}on${reset}"
             }
         }
     } catch {}
 } else {
     # No valid usage data - show placeholders
-    $line1 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
-    $line1 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
+    $line2 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
+    $line2 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
 }
 
-# Output two lines
-Write-Host "${line1}`n${line2}"
+# Output three lines
+Write-Host "${line1}`n${line2}`n${line3}"
 
 exit 0

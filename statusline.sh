@@ -1,7 +1,8 @@
 #!/bin/bash
-# Two lines:
-#   Line 1: Effort Tokens (Model) | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
-#   Line 2: Dir | Branch changes
+# Three lines:
+#   Line 1: Model | [GSD Alert |] Current Task
+#   Line 2: Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 3: Dir | Branch changes
 
 set -f  # disable globbing
 
@@ -71,6 +72,7 @@ progress_bar() {
 
 # ===== Extract data from JSON =====
 model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
+session_id=$(echo "$input" | jq -r '.session_id // empty')
 
 # Context window
 size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
@@ -108,9 +110,55 @@ elif [ -f "$settings_path" ]; then
     [ -n "$effort_val" ] && effort_level="$effort_val"
 fi
 
-# ===== Build two-line output =====
+# ===== GSD Update Check =====
+gsd_alert=""
+gsd_cache_file="$claude_config_dir/cache/gsd-update-check.json"
+if [ -f "$gsd_cache_file" ]; then
+    update_available=$(jq -r '.update_available // false' "$gsd_cache_file" 2>/dev/null)
+    stale_hooks=$(jq -r '.stale_hooks // [] | length' "$gsd_cache_file" 2>/dev/null)
+
+    if [ "$update_available" = "true" ]; then
+        gsd_alert+="${yellow}⬆ /gsd:update${reset}"
+    fi
+    if [ "$stale_hooks" -gt 0 ] 2>/dev/null; then
+        [ -n "$gsd_alert" ] && gsd_alert+=" "
+        gsd_alert+="${red}⚠ stale hooks${reset}"
+    fi
+fi
+
+# ===== Current Todo Task =====
+current_task=""
+todos_dir="$claude_config_dir/todos"
+if [ -n "$session_id" ] && [ -d "$todos_dir" ]; then
+    # Find the most recent todo file for this session (agent todos)
+    latest_todo=$(find "$todos_dir" -name "${session_id}-agent-*.json" -type f 2>/dev/null | \
+        while read -r f; do
+            echo "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null) $f"
+        done | sort -rn | head -1 | cut -d' ' -f2-)
+
+    if [ -n "$latest_todo" ] && [ -f "$latest_todo" ]; then
+        # Extract activeForm from in_progress task
+        current_task=$(jq -r '.[] | select(.status == "in_progress") | .activeForm // empty' "$latest_todo" 2>/dev/null | head -1)
+    fi
+fi
+
+# ===== Build three-line output =====
 line1=""
 line2=""
+line3=""
+
+# Line 1: Model | [GSD Alert |] Current Task
+line1+="${dim}${model_name}${reset}"
+if [ -n "$gsd_alert" ]; then
+    line1+=" ${dim}|${reset} ${gsd_alert}"
+fi
+if [ -n "$current_task" ]; then
+    # Truncate task if too long (max 50 chars)
+    if [ ${#current_task} -gt 50 ]; then
+        current_task="${current_task:0:47}..."
+    fi
+    line1+=" ${dim}|${reset} ${white}${current_task}${reset}"
+fi
 
 # Current working directory and git info
 cwd=$(echo "$input" | jq -r '.cwd // empty')
@@ -126,25 +174,24 @@ if [ -n "$cwd" ]; then
     fi
 fi
 
-# Line 1: Effort Tokens (Model) | H | W | Extra
+# Line 2: Effort Tokens | H | W | Extra
 case "$effort_level" in
-    low)    line1+="${dim}low${reset} " ;;
-    medium) line1+="${orange}med${reset} " ;;
-    *)      line1+="${green}high${reset} " ;;
+    low)    line2+="${dim}low${reset} " ;;
+    medium) line2+="${orange}med${reset} " ;;
+    *)      line2+="${green}high${reset} " ;;
 esac
-line1+="${orange}${used_tokens}/${total_tokens}${reset}"
-line1+=" ${dim}(${reset}${blue}${model_name}${reset}${dim})${reset}"
+line2+="${orange}${used_tokens}/${total_tokens}${reset}"
 
-# Line 2: Dir | Branch changes
+# Line 3: Dir | Branch changes
 if [ -n "$display_dir" ]; then
-    line2+="${cyan}${display_dir}${reset}"
+    line3+="${cyan}${display_dir}${reset}"
 fi
 
 if [ -n "$git_branch" ]; then
-    [ -n "$display_dir" ] && line2+=" ${dim}|${reset} "
-    line2+="${green}${git_branch}${reset}"
+    [ -n "$line3" ] && line3+=" ${dim}|${reset} "
+    line3+="${green}${git_branch}${reset}"
     if [ -n "$git_stat" ]; then
-        line2+=" ${green}${git_stat%% *}${reset} ${red}${git_stat##* }${reset}"
+        line3+=" ${green}${git_stat%% *}${reset} ${red}${git_stat##* }${reset}"
     fi
 fi
 
@@ -320,8 +367,8 @@ if [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>
     five_hour_color=$(usage_color "$five_hour_pct")
 
     five_hour_bar=$(progress_bar "$five_hour_pct" 8 "$five_hour_color")
-    line1+="${sep}${five_hour_color}${five_hour_pct}%${reset} ${five_hour_bar} ${white}H${reset}"
-    [ -n "$five_hour_reset" ] && line1+=" ${dim}${five_hour_reset}${reset}"
+    line2+="${sep}${five_hour_color}${five_hour_pct}%${reset} ${five_hour_bar} ${white}H${reset}"
+    [ -n "$five_hour_reset" ] && line2+=" ${dim}${five_hour_reset}${reset}"
 
     # ---- 7-day (weekly) ----
     seven_day_pct=$(echo "$usage_data" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
@@ -330,8 +377,8 @@ if [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>
     seven_day_color=$(usage_color "$seven_day_pct")
 
     seven_day_bar=$(progress_bar "$seven_day_pct" 8 "$seven_day_color")
-    line1+="${sep}${seven_day_color}${seven_day_pct}%${reset} ${seven_day_bar} ${white}W${reset}"
-    [ -n "$seven_day_reset" ] && line1+=" ${dim}${seven_day_reset}${reset}"
+    line2+="${sep}${seven_day_color}${seven_day_pct}%${reset} ${seven_day_bar} ${white}W${reset}"
+    [ -n "$seven_day_reset" ] && line2+=" ${dim}${seven_day_reset}${reset}"
 
     # ---- Extra usage ----
     extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
@@ -343,18 +390,18 @@ if [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>
         if [ -n "$extra_used" ] && [ -n "$extra_limit" ] && [[ "$extra_used" != *'$'* ]] && [[ "$extra_limit" != *'$'* ]]; then
             extra_color=$(usage_color "$extra_pct")
             extra_bar=$(progress_bar "$extra_pct" 6 "$extra_color")
-            line1+="${sep}${extra_color}${extra_pct}%${reset} ${extra_bar} ${white}E${reset} ${dim}\$${extra_used}/\$${extra_limit}${reset}"
+            line2+="${sep}${extra_color}${extra_pct}%${reset} ${extra_bar} ${white}E${reset} ${dim}\$${extra_used}/\$${extra_limit}${reset}"
         else
-            line1+="${sep}${white}E${reset} ${green}on${reset}"
+            line2+="${sep}${white}E${reset} ${green}on${reset}"
         fi
     fi
 else
     # No valid usage data — show placeholders
-    line1+="${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
-    line1+="${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
+    line2+="${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
+    line2+="${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
 fi
 
-# Output two lines
-printf "%b\n%b" "$line1" "$line2"
+# Output three lines
+printf "%b\n%b\n%b" "$line1" "$line2" "$line3"
 
 exit 0
