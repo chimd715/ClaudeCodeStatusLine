@@ -1,6 +1,6 @@
 # Claude Code Status Line
 
-A custom status line for [Claude Code](https://claude.com/claude-code) that displays the model, current task, token usage, rate limits, git state, and an optional per-session custom message in a compact three-line format. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
+A custom status line for [Claude Code](https://claude.com/claude-code) that displays the model, current task, token usage, rate limits, git state, an optional per-session label, and an optional multi-line memo. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
 
 ## Screenshot
 
@@ -24,25 +24,38 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 | **W** | Weekly (7-day) rate limit: percentage, progress bar, reset time |
 | **E** | Extra usage: percentage, progress bar, credits spent / limit (if enabled) |
 
-**Line 3 — Project & message**
+**Line 3 — Project & label**
 | Segment | Description |
 |---------|-------------|
 | **Dir** | Current working directory name |
 | **Branch** | Git branch name and file changes (+/-) |
-| **Message** | Optional per-session message set via `/setmsg` (truncated to 60 chars) |
+| **Label** | Optional per-session label set via `/setmsg` (truncated to 60 chars) |
+
+**Line 4+ — Multi-line memo (optional)**
+
+Each line of the per-session memo (set via `/setmemo`) becomes its own dimmed row prefixed with `│`. Capped at 20 rows × 100 chars per line for sanity.
 
 Usage percentages are color-coded: green (<50%) → yellow (≥50%) → orange (≥70%) → red (≥90%).
 
-## Custom per-session messages
+## Per-session label and memo
 
-Use the `/setmsg` slash command to attach a custom label to your statusline that lives only for the current session:
+Two slash commands attach session-scoped text to the statusline:
 
 ```
-/setmsg refactoring auth flow   ← appears after git branch on line 3
-/setmsg                         ← clears the message
+/setmsg  refactoring auth flow             ← short label after the git branch on line 3
+/setmsg                                    ← clear the label
+
+/setmemo TODO:\n- fix bug\n- update docs   ← multi-line memo below the status block
+/setmemo                                   ← clear the memo
 ```
 
-Messages are stored at `~/.claude/cache/statusline-msg/<session_id>.txt`. A SessionStart hook (`cleanup-statusline-msgs.py`) removes files older than 30 days automatically — no manual cleanup needed.
+`/setmemo` uses `\n` as a literal line-break separator (interpreted via `printf '%b'`).
+
+Storage:
+- Labels → `~/.claude/cache/statusline-msg/<session_id>.txt`
+- Memos  → `~/.claude/cache/statusline-memo/<session_id>.txt`
+
+A SessionStart hook (`cleanup-statusline-msgs.py`) removes files older than 30 days from both directories — no manual cleanup needed.
 
 ## Requirements
 
@@ -70,7 +83,7 @@ Messages are stored at `~/.claude/cache/statusline-msg/<session_id>.txt`. A Sess
 The installer is **idempotent** — re-run it any time to repair or update. It:
 - Copies `statusline.sh` → `~/.claude/`
 - Copies `cleanup-statusline-msgs.py` → `~/.claude/scripts/`
-- Copies `setmsg.md` → `~/.claude/commands/`
+- Copies `setmsg.md` and `setmemo.md` → `~/.claude/commands/`
 - Adds `statusLine` to `~/.claude/settings.json` (only if unset)
 - Registers the SessionStart cleanup hook (only if missing)
 
@@ -98,12 +111,13 @@ After installation, restart Claude Code (or open a new session).
    }
    ```
 
-3. *(Optional, for `/setmsg`)* — install the slash command and cleanup hook:
+3. *(Optional, for `/setmsg` and `/setmemo`)* — install the slash commands and cleanup hook:
 
    ```bash
-   mkdir -p ~/.claude/scripts ~/.claude/commands ~/.claude/cache/statusline-msg
+   mkdir -p ~/.claude/scripts ~/.claude/commands \
+            ~/.claude/cache/statusline-msg ~/.claude/cache/statusline-memo
    cp cleanup-statusline-msgs.py ~/.claude/scripts/
-   cp setmsg.md ~/.claude/commands/
+   cp setmsg.md setmemo.md ~/.claude/commands/
    ```
 
    Then merge this into `settings.json`:
