@@ -195,6 +195,21 @@ if [ -n "$git_branch" ]; then
     fi
 fi
 
+# Custom per-session message (set via /setmsg slash command)
+if [ -n "$session_id" ]; then
+    session_msg_file="$claude_config_dir/cache/statusline-msg/${session_id}.txt"
+    if [ -f "$session_msg_file" ]; then
+        session_msg=$(cat "$session_msg_file" 2>/dev/null)
+        if [ -n "$session_msg" ]; then
+            if [ ${#session_msg} -gt 60 ]; then
+                session_msg="${session_msg:0:57}..."
+            fi
+            [ -n "$line3" ] && line3+=" ${dim}|${reset} "
+            line3+="${white}${session_msg}${reset}"
+        fi
+    fi
+fi
+
 # ===== Cross-platform OAuth token resolution (from statusline.sh) =====
 # Tries credential sources in order: env var → macOS Keychain → Linux creds file → GNOME Keyring
 get_oauth_token() {
