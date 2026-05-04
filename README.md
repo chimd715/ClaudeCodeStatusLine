@@ -1,6 +1,6 @@
 # Claude Code Status Line
 
-A custom status line for [Claude Code](https://claude.com/claude-code) that displays model info, token usage, rate limits, and reset times in a compact two-line format. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
+A custom status line for [Claude Code](https://claude.com/claude-code) that displays the model, current task, token usage, rate limits, git state, and an optional per-session custom message in a compact three-line format. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
 
 ## Screenshot
 
@@ -8,60 +8,86 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 
 ## What it shows
 
-The status line displays information in two lines:
-
-**Line 1: Usage & Limits**
+**Line 1 — Model & task**
 | Segment | Description |
 |---------|-------------|
-| **Effort** | Reasoning effort level (low, med, high) |
-| **Tokens** | Used / total context window tokens |
-| **Model** | Current model name (e.g., Opus 4.5) |
-| **H** | 5-hour rate limit: percentage, progress bar, and reset time |
-| **W** | Weekly (7-day) rate limit: percentage, progress bar, and reset time |
-| **E** | Extra usage: percentage, progress bar, and credits spent/limit (if enabled) |
+| **Model** | Current model name (e.g., Opus 4.7) |
+| **GSD Alert** | Optional: appears when `/gsd:update` is available or hooks are stale |
+| **Task** | Current `in_progress` todo's active form (truncated to 50 chars) |
 
-**Line 2: Project Info**
+**Line 2 — Usage & limits**
+| Segment | Description |
+|---------|-------------|
+| **Effort** | Reasoning effort level (low / med / high) |
+| **Tokens** | Used / total context window tokens |
+| **H** | 5-hour rate limit: percentage, progress bar, reset time |
+| **W** | Weekly (7-day) rate limit: percentage, progress bar, reset time |
+| **E** | Extra usage: percentage, progress bar, credits spent / limit (if enabled) |
+
+**Line 3 — Project & message**
 | Segment | Description |
 |---------|-------------|
 | **Dir** | Current working directory name |
 | **Branch** | Git branch name and file changes (+/-) |
+| **Message** | Optional per-session message set via `/setmsg` (truncated to 60 chars) |
 
 Usage percentages are color-coded: green (<50%) → yellow (≥50%) → orange (≥70%) → red (≥90%).
+
+## Custom per-session messages
+
+Use the `/setmsg` slash command to attach a custom label to your statusline that lives only for the current session:
+
+```
+/setmsg refactoring auth flow   ← appears after git branch on line 3
+/setmsg                         ← clears the message
+```
+
+Messages are stored at `~/.claude/cache/statusline-msg/<session_id>.txt`. A SessionStart hook (`cleanup-statusline-msgs.py`) removes files older than 30 days automatically — no manual cleanup needed.
 
 ## Requirements
 
 ### macOS / Linux
-
-- `jq` — for JSON parsing
+- `jq` — JSON parsing
+- `python3` — for the SessionStart cleanup hook
 - `curl` — for fetching usage data from the Anthropic API
 - Claude Code with OAuth authentication (Pro/Max subscription)
 
 ### Windows
-
 - PowerShell 5.1+ (included by default on Windows 10/11)
 - `git` in PATH (for branch/diff info)
 - Claude Code with OAuth authentication (Pro/Max subscription)
 
+> `install.sh` and `/setmsg` are bash-only. Windows users get the core statusline via `statusline.ps1`.
+
 ## Installation
 
-### Quick setup (recommended)
+### Quick install (macOS / Linux)
 
-Copy the contents of `statusline.sh` (or `statusline.ps1` on Windows) and paste it into Claude Code with the prompt:
+```bash
+./install.sh
+```
 
-> Use this script as my status bar
+The installer is **idempotent** — re-run it any time to repair or update. It:
+- Copies `statusline.sh` → `~/.claude/`
+- Copies `cleanup-statusline-msgs.py` → `~/.claude/scripts/`
+- Copies `setmsg.md` → `~/.claude/commands/`
+- Adds `statusLine` to `~/.claude/settings.json` (only if unset)
+- Registers the SessionStart cleanup hook (only if missing)
 
-Claude Code will save the script and configure `settings.json` for you automatically.
+Override the install location with `CLAUDE_CONFIG_DIR=/custom/path ./install.sh`.
+
+After installation, restart Claude Code (or open a new session).
 
 ### Manual setup — macOS / Linux
 
-1. Copy the script to your Claude config directory:
+1. Copy the statusline script:
 
    ```bash
    cp statusline.sh ~/.claude/statusline.sh
    chmod +x ~/.claude/statusline.sh
    ```
 
-2. Add the status line config to `~/.claude/settings.json`:
+2. Add to `~/.claude/settings.json`:
 
    ```json
    {
@@ -72,19 +98,46 @@ Claude Code will save the script and configure `settings.json` for you automatic
    }
    ```
 
-3. Restart Claude Code.
+3. *(Optional, for `/setmsg`)* — install the slash command and cleanup hook:
+
+   ```bash
+   mkdir -p ~/.claude/scripts ~/.claude/commands ~/.claude/cache/statusline-msg
+   cp cleanup-statusline-msgs.py ~/.claude/scripts/
+   cp setmsg.md ~/.claude/commands/
+   ```
+
+   Then merge this into `settings.json`:
+
+   ```json
+   {
+     "hooks": {
+       "SessionStart": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "python3 \"$HOME/.claude/scripts/cleanup-statusline-msgs.py\""
+             }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+4. Restart Claude Code.
 
 ### Manual setup — Windows
 
 > **Windows users should use `statusline.ps1`** instead of the bash script.
 
-1. Copy the script to your Claude config directory:
+1. Copy the script:
 
    ```powershell
    Copy-Item statusline.ps1 "$env:USERPROFILE\.claude\statusline.ps1"
    ```
 
-2. Add the status line config to `%USERPROFILE%\.claude\settings.json`:
+2. Add to `%USERPROFILE%\.claude\settings.json`:
 
    **PowerShell / CMD:**
    ```json
@@ -106,13 +159,13 @@ Claude Code will save the script and configure `settings.json` for you automatic
    }
    ```
 
-   > **Note:** Use `%USERPROFILE%` in CMD/PowerShell or `$USERPROFILE` in bash shells. The `%VAR%` syntax does not expand in bash.
+   > Use `%USERPROFILE%` in CMD/PowerShell or `$USERPROFILE` in bash shells. The `%VAR%` syntax does not expand in bash.
 
 3. Restart Claude Code.
 
 ## Caching
 
-Usage data from the Anthropic API is cached for 60 seconds at `/tmp/claude/statusline-usage-cache.json` to avoid excessive API calls.
+Usage data from the Anthropic API is cached for 60 seconds at `/tmp/claude/statusline-usage-cache.json` to avoid excessive API calls. The cache is shared across all Claude Code instances.
 
 ## License
 
