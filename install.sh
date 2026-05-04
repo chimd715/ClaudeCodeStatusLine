@@ -4,7 +4,8 @@
 # Installs:
 #   - statusline.sh                  → $CLAUDE_DIR/statusline.sh
 #   - cleanup-statusline-msgs.py     → $CLAUDE_DIR/scripts/
-#   - setmsg.md  (slash command)     → $CLAUDE_DIR/commands/
+#   - setmsg.md   (slash command)    → $CLAUDE_DIR/commands/
+#   - setmemo.md  (slash command)    → $CLAUDE_DIR/commands/
 #
 # Configures (idempotently):
 #   - statusLine entry in settings.json (only if unset)
@@ -35,11 +36,13 @@ mkdir -p \
     "$CLAUDE_DIR" \
     "$CLAUDE_DIR/scripts" \
     "$CLAUDE_DIR/commands" \
-    "$CLAUDE_DIR/cache/statusline-msg"
+    "$CLAUDE_DIR/cache/statusline-msg" \
+    "$CLAUDE_DIR/cache/statusline-memo"
 
 install -m 755 "$SRC_DIR/statusline.sh"               "$CLAUDE_DIR/statusline.sh"
 install -m 755 "$SRC_DIR/cleanup-statusline-msgs.py"  "$CLAUDE_DIR/scripts/cleanup-statusline-msgs.py"
 install -m 644 "$SRC_DIR/setmsg.md"                   "$CLAUDE_DIR/commands/setmsg.md"
+install -m 644 "$SRC_DIR/setmemo.md"                  "$CLAUDE_DIR/commands/setmemo.md"
 ok "Files installed to $CLAUDE_DIR"
 
 # ---------- 3. settings.json wiring ----------
@@ -100,8 +103,10 @@ Restart Claude Code (or open a new session) to pick up the statusLine config
 and the SessionStart cleanup hook.
 
 Usage:
-  /setmsg <message>   set a per-session message shown after the git branch
-  /setmsg             clear the current session's message
+  /setmsg  <message>   set a per-session label shown after the git branch
+  /setmsg              clear the current session's label
+  /setmemo <text>      set a multi-line memo (use \n for line breaks)
+  /setmemo             clear the current session's memo
 
-Stale message files (>30 days old) are removed automatically on session start.
+Stale msg/memo files (>30 days old) are removed automatically on session start.
 EOF
