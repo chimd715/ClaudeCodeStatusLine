@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove statusline session message files older than 30 days.
+"""Remove statusline session message and memo files older than 30 days.
 
 Invoked from a Claude Code SessionStart hook. Runs silently — any output
 would clutter the session start. Errors on individual files are tolerated
@@ -9,20 +9,24 @@ import sys
 import time
 from pathlib import Path
 
-CACHE_DIR = Path.home() / ".claude" / "cache" / "statusline-msg"
+CACHE_DIRS = [
+    Path.home() / ".claude" / "cache" / "statusline-msg",
+    Path.home() / ".claude" / "cache" / "statusline-memo",
+]
 MAX_AGE_SECONDS = 30 * 86400
 
 
 def main() -> int:
-    if not CACHE_DIR.is_dir():
-        return 0
     cutoff = time.time() - MAX_AGE_SECONDS
-    for entry in CACHE_DIR.iterdir():
-        try:
-            if entry.is_file() and entry.stat().st_mtime < cutoff:
-                entry.unlink()
-        except OSError:
+    for cache_dir in CACHE_DIRS:
+        if not cache_dir.is_dir():
             continue
+        for entry in cache_dir.iterdir():
+            try:
+                if entry.is_file() and entry.stat().st_mtime < cutoff:
+                    entry.unlink()
+            except OSError:
+                continue
     return 0
 
 

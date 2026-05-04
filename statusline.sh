@@ -1,8 +1,9 @@
 #!/bin/bash
-# Three lines:
+# Output:
 #   Line 1: Model | [GSD Alert |] Current Task
 #   Line 2: Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
-#   Line 3: Dir | Branch changes
+#   Line 3: Dir | Branch changes | [/setmsg session label]
+#   Line 4+: Optional multi-line memo set via /setmemo
 
 set -f  # disable globbing
 
@@ -416,7 +417,30 @@ else
     line2+="${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
 fi
 
-# Output three lines
+# ===== Multi-line memo (set via /setmemo) =====
+# Each line of the memo file becomes its own statusline row, dimmed and
+# capped to 100 chars wide / 20 rows tall to keep the prompt sane.
+memo_lines=""
+if [ -n "$session_id" ]; then
+    memo_file="$claude_config_dir/cache/statusline-memo/${session_id}.txt"
+    if [ -f "$memo_file" ]; then
+        memo_count=0
+        while IFS= read -r memo_line || [ -n "$memo_line" ]; do
+            memo_count=$((memo_count + 1))
+            if [ "$memo_count" -gt 20 ]; then
+                memo_lines+=$'\n'"${dim}│ … (memo truncated)${reset}"
+                break
+            fi
+            if [ ${#memo_line} -gt 100 ]; then
+                memo_line="${memo_line:0:97}..."
+            fi
+            memo_lines+=$'\n'"${dim}│ ${memo_line}${reset}"
+        done < "$memo_file"
+    fi
+fi
+
+# Output three lines + optional memo rows
 printf "%b\n%b\n%b" "$line1" "$line2" "$line3"
+[ -n "$memo_lines" ] && printf "%b" "$memo_lines"
 
 exit 0
