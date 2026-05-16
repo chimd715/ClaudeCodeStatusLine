@@ -42,7 +42,7 @@ format_commas() {
     printf "%'d" "$1"
 }
 
-# Format duration ms → human readable (e.g., 8m13s, 2h05m, 45s)
+# Format duration ms → human readable (e.g., 8m 13s, 2H 05m, 45s)
 format_duration() {
     local ms=$1
     local total_s=$(( ms / 1000 ))
@@ -50,9 +50,9 @@ format_duration() {
     local m=$(( (total_s % 3600) / 60 ))
     local s=$(( total_s % 60 ))
     if [ "$h" -gt 0 ]; then
-        printf "%dh%02dm" "$h" "$m"
+        printf "%dH %02dm" "$h" "$m"
     elif [ "$m" -gt 0 ]; then
-        printf "%dm%02ds" "$m" "$s"
+        printf "%dm %02ds" "$m" "$s"
     else
         printf "%ds" "$s"
     fi

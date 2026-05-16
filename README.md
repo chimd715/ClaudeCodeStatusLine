@@ -15,7 +15,7 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 | **Model** | Current model name (e.g., Opus 4.7) |
 | **AI Title** | Claude Code's auto-generated session title (truncated to 50 chars) |
 | ✓ **Todo** | Completed / total todos for the current session, when any exist |
-| **Duration** | Human-readable session duration (e.g., `8m13s`, `2h05m`) |
+| **Duration** | Human-readable session duration (e.g., `8m 13s`, `2H 05m`) |
 
 **Line 2 — Usage & limits**
 | Segment | Description |

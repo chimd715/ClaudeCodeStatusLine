@@ -37,14 +37,14 @@ function Format-Commas([long]$num) {
     return $num.ToString("N0")
 }
 
-# Format duration ms → human readable (e.g., 8m13s, 2h05m, 45s)
+# Format duration ms → human readable (e.g., 8m 13s, 2H 05m, 45s)
 function Format-Duration([long]$ms) {
     $totalS = [math]::Floor($ms / 1000)
     $h = [math]::Floor($totalS / 3600)
     $m = [math]::Floor(($totalS % 3600) / 60)
     $s = $totalS % 60
-    if ($h -gt 0)    { return "{0}h{1:D2}m" -f $h, $m }
-    elseif ($m -gt 0) { return "{0}m{1:D2}s" -f $m, $s }
+    if ($h -gt 0)    { return "{0}H {1:D2}m" -f $h, $m }
+    elseif ($m -gt 0) { return "{0}m {1:D2}s" -f $m, $s }
     else              { return "{0}s" -f $s }
 }
 
