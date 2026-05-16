@@ -1,0 +1,13 @@
+{
+  "name": "claude-code-statusline",
+  "owner": {
+    "name": "Daniel Oliveira"
+  },
+  "plugins": [
+    {
+      "name": "claude-code-statusline",
+      "source": ".",
+      "description": "Slash commands /setmsg and /setmemo for the Claude Code statusline."
+    }
+  ]
+}
