@@ -1,7 +1,7 @@
 # Three lines:
-#   Line 1: Model | [GSD Alert |] Current Task
-#   Line 2: Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
-#   Line 3: Dir | Branch changes
+#   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
+#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 3: Dir | Branch changes | vX.Y.Z
 
 # Read input from stdin
 $input = @($Input) -join "`n"
@@ -37,6 +37,17 @@ function Format-Commas([long]$num) {
     return $num.ToString("N0")
 }
 
+# Format duration ms → human readable (e.g., 8m13s, 2h05m, 45s)
+function Format-Duration([long]$ms) {
+    $totalS = [math]::Floor($ms / 1000)
+    $h = [math]::Floor($totalS / 3600)
+    $m = [math]::Floor(($totalS % 3600) / 60)
+    $s = $totalS % 60
+    if ($h -gt 0)    { return "{0}h{1:D2}m" -f $h, $m }
+    elseif ($m -gt 0) { return "{0}m{1:D2}s" -f $m, $s }
+    else              { return "{0}s" -f $s }
+}
+
 # Return color escape based on usage percentage
 function Get-UsageColor([int]$pct) {
     if ($pct -ge 90) { return $red }
@@ -63,6 +74,11 @@ $data = $input | ConvertFrom-Json
 
 $modelName = if ($data.model.display_name) { $data.model.display_name } else { "Claude" }
 $sessionId = $data.session_id
+$ccVersion = $data.version
+$thinkingEnabled = ($data.thinking.enabled -eq $true)
+$fastMode = ($data.fast_mode -eq $true)
+$totalDurationMs = if ($data.cost.total_duration_ms) { [long]$data.cost.total_duration_ms } else { 0 }
+$transcriptPath = $data.transcript_path
 
 # Context window
 $size = if ($data.context_window.context_window_size) { [long]$data.context_window.context_window_size } else { 200000 }
@@ -104,24 +120,21 @@ if ($env:CLAUDE_CODE_EFFORT_LEVEL) {
     }
 }
 
-# ===== GSD Update Check =====
-$gsdAlert = ""
-$gsdCacheFile = Join-Path $claudeConfigDir "cache\gsd-update-check.json"
-if (Test-Path $gsdCacheFile) {
+# ===== AI-generated session title (from transcript) =====
+$aiTitle = ""
+if ($transcriptPath -and (Test-Path $transcriptPath)) {
     try {
-        $gsdCache = Get-Content $gsdCacheFile -Raw | ConvertFrom-Json
-        if ($gsdCache.update_available -eq $true) {
-            $gsdAlert += "${yellow}⬆ /gsd:update${reset}"
-        }
-        if ($gsdCache.stale_hooks -and $gsdCache.stale_hooks.Count -gt 0) {
-            if ($gsdAlert) { $gsdAlert += " " }
-            $gsdAlert += "${red}⚠ stale hooks${reset}"
+        $lastAiTitleLine = Select-String -Path $transcriptPath -Pattern '"type":"ai-title"' -SimpleMatch |
+            Select-Object -Last 1
+        if ($lastAiTitleLine) {
+            $obj = $lastAiTitleLine.Line | ConvertFrom-Json
+            if ($obj.aiTitle) { $aiTitle = $obj.aiTitle }
         }
     } catch {}
 }
 
-# ===== Current Todo Task =====
-$currentTask = ""
+# ===== Todo progress (done/total from latest session todo file) =====
+$todoProgress = ""
 $todosDir = Join-Path $claudeConfigDir "todos"
 if ($sessionId -and (Test-Path $todosDir)) {
     try {
@@ -130,10 +143,11 @@ if ($sessionId -and (Test-Path $todosDir)) {
             Select-Object -First 1
 
         if ($todoFiles) {
-            $todos = Get-Content $todoFiles.FullName -Raw | ConvertFrom-Json
-            $inProgress = $todos | Where-Object { $_.status -eq "in_progress" } | Select-Object -First 1
-            if ($inProgress -and $inProgress.activeForm) {
-                $currentTask = $inProgress.activeForm
+            $todos = @(Get-Content $todoFiles.FullName -Raw | ConvertFrom-Json)
+            $todoTotal = $todos.Count
+            $todoDone = @($todos | Where-Object { $_.status -eq "completed" }).Count
+            if ($todoTotal -gt 0) {
+                $todoProgress = "${todoDone}/${todoTotal}"
             }
         }
     } catch {}
@@ -144,17 +158,20 @@ $line1 = ""
 $line2 = ""
 $line3 = ""
 
-# Line 1: Model | [GSD Alert |] Current Task
+# Line 1: [🧠] Model | ai-title | ✓ todo | duration
+if ($thinkingEnabled) { $line1 += "🧠 " }
 $line1 += "${dim}${modelName}${reset}"
-if ($gsdAlert) {
-    $line1 += " ${dim}|${reset} ${gsdAlert}"
-}
-if ($currentTask) {
-    # Truncate task if too long (max 50 chars)
-    if ($currentTask.Length -gt 50) {
-        $currentTask = $currentTask.Substring(0, 47) + "..."
+if ($aiTitle) {
+    if ($aiTitle.Length -gt 50) {
+        $aiTitle = $aiTitle.Substring(0, 47) + "..."
     }
-    $line1 += " ${dim}|${reset} ${white}${currentTask}${reset}"
+    $line1 += " ${dim}|${reset} ${white}${aiTitle}${reset}"
+}
+if ($todoProgress) {
+    $line1 += " ${dim}|${reset} ${cyan}✓ ${todoProgress}${reset}"
+}
+if ($totalDurationMs -gt 0) {
+    $line1 += " ${dim}|${reset} ${dim}$(Format-Duration $totalDurationMs)${reset}"
 }
 
 # Current working directory and git info
@@ -186,7 +203,8 @@ if ($cwd) {
     }
 }
 
-# Line 2: Effort Tokens | H | W | Extra
+# Line 2: [⚡] Effort Tokens | H | W | Extra
+if ($fastMode) { $line2 += "⚡ " }
 switch ($effortLevel) {
     "low"    { $line2 += "${dim}low${reset} " }
     "medium" { $line2 += "${orange}med${reset} " }
@@ -206,6 +224,29 @@ if ($gitBranch) {
         $parts = $gitStat -split ' '
         $line3 += " ${green}$($parts[0])${reset} ${red}$($parts[1])${reset}"
     }
+}
+
+# Custom per-session message (set via /setmsg slash command)
+if ($sessionId) {
+    $sessionMsgFile = Join-Path $claudeConfigDir "cache\statusline-msg\${sessionId}.txt"
+    if (Test-Path $sessionMsgFile) {
+        try {
+            $sessionMsg = (Get-Content -LiteralPath $sessionMsgFile -Raw -ErrorAction Stop)
+        } catch { $sessionMsg = "" }
+        if ($sessionMsg) {
+            if ($sessionMsg.Length -gt 60) {
+                $sessionMsg = $sessionMsg.Substring(0, 57) + "..."
+            }
+            if ($line3) { $line3 += " ${dim}|${reset} " }
+            $line3 += "${white}${sessionMsg}${reset}"
+        }
+    }
+}
+
+# Append Claude Code version to end of line 3
+if ($ccVersion) {
+    if ($line3) { $line3 += " ${dim}|${reset} " }
+    $line3 += "${dim}v${ccVersion}${reset}"
 }
 
 # ===== OAuth token resolution =====

@@ -1,6 +1,6 @@
 # Claude Code Status Line
 
-A custom status line for [Claude Code](https://claude.com/claude-code) that displays the model, current task, token usage, rate limits, git state, an optional per-session label, and an optional multi-line memo. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
+A custom status line for [Claude Code](https://claude.com/claude-code) that displays the model, AI-generated session title, todo progress, session duration, token usage, rate limits, git state, the Claude Code version, an optional per-session label, and an optional multi-line memo. It runs as an external shell command, so it does not slow down Claude Code or consume any extra tokens.
 
 ## Screenshot
 
@@ -8,28 +8,32 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 
 ## What it shows
 
-**Line 1 — Model & task**
+**Line 1 — Model & session**
 | Segment | Description |
 |---------|-------------|
+| 🧠 | Shown only when extended thinking is enabled |
 | **Model** | Current model name (e.g., Opus 4.7) |
-| **GSD Alert** | Optional: appears when `/gsd:update` is available or hooks are stale |
-| **Task** | Current `in_progress` todo's active form (truncated to 50 chars) |
+| **AI Title** | Claude Code's auto-generated session title (truncated to 50 chars) |
+| ✓ **Todo** | Completed / total todos for the current session, when any exist |
+| **Duration** | Human-readable session duration (e.g., `8m13s`, `2h05m`) |
 
 **Line 2 — Usage & limits**
 | Segment | Description |
 |---------|-------------|
+| ⚡ | Shown only when `/fast` mode is active |
 | **Effort** | Reasoning effort level (low / med / high) |
 | **Tokens** | Used / total context window tokens |
 | **H** | 5-hour rate limit: percentage, progress bar, reset time |
 | **W** | Weekly (7-day) rate limit: percentage, progress bar, reset time |
 | **E** | Extra usage: percentage, progress bar, credits spent / limit (if enabled) |
 
-**Line 3 — Project & label**
+**Line 3 — Project, label & version**
 | Segment | Description |
 |---------|-------------|
 | **Dir** | Current working directory name |
 | **Branch** | Git branch name and file changes (+/-) |
 | **Label** | Optional per-session label set via `/setmsg` (truncated to 60 chars) |
+| **Version** | Claude Code version (e.g., `v2.1.143`) |
 
 **Line 4+ — Multi-line memo (optional)**
 

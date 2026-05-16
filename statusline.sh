@@ -1,8 +1,8 @@
 #!/bin/bash
 # Output:
-#   Line 1: Model | [GSD Alert |] Current Task
-#   Line 2: Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
-#   Line 3: Dir | Branch changes | [/setmsg session label]
+#   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
+#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 3: Dir | Branch changes | [/setmsg session label] | vX.Y.Z
 #   Line 4+: Optional multi-line memo set via /setmemo
 
 set -f  # disable globbing
@@ -13,6 +13,10 @@ if [ -z "$input" ]; then
     printf "Claude"
     exit 0
 fi
+
+# DEBUG: dump stdin JSON for inspection (remove once done)
+debug_dump_dir="$HOME/.claude/debug"
+[ -d "$debug_dump_dir" ] && printf '%s' "$input" > "$debug_dump_dir/statusline-input.json" 2>/dev/null
 
 # ANSI colors matching oh-my-posh theme
 blue='\033[38;2;0;153;255m'
@@ -40,6 +44,22 @@ format_tokens() {
 # Format number with commas (e.g., 134,938)
 format_commas() {
     printf "%'d" "$1"
+}
+
+# Format duration ms → human readable (e.g., 8m13s, 2h05m, 45s)
+format_duration() {
+    local ms=$1
+    local total_s=$(( ms / 1000 ))
+    local h=$(( total_s / 3600 ))
+    local m=$(( (total_s % 3600) / 60 ))
+    local s=$(( total_s % 60 ))
+    if [ "$h" -gt 0 ]; then
+        printf "%dh%02dm" "$h" "$m"
+    elif [ "$m" -gt 0 ]; then
+        printf "%dm%02ds" "$m" "$s"
+    else
+        printf "%ds" "$s"
+    fi
 }
 
 # Return color escape based on usage percentage
@@ -74,6 +94,10 @@ progress_bar() {
 # ===== Extract data from JSON =====
 model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
 session_id=$(echo "$input" | jq -r '.session_id // empty')
+cc_version=$(echo "$input" | jq -r '.version // empty')
+thinking_enabled=$(echo "$input" | jq -r '.thinking.enabled // false')
+fast_mode=$(echo "$input" | jq -r '.fast_mode // false')
+total_duration_ms=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
 
 # Context window
 size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
@@ -111,35 +135,29 @@ elif [ -f "$settings_path" ]; then
     [ -n "$effort_val" ] && effort_level="$effort_val"
 fi
 
-# ===== GSD Update Check =====
-gsd_alert=""
-gsd_cache_file="$claude_config_dir/cache/gsd-update-check.json"
-if [ -f "$gsd_cache_file" ]; then
-    update_available=$(jq -r '.update_available // false' "$gsd_cache_file" 2>/dev/null)
-    stale_hooks=$(jq -r '.stale_hooks // [] | length' "$gsd_cache_file" 2>/dev/null)
-
-    if [ "$update_available" = "true" ]; then
-        gsd_alert+="${yellow}⬆ /gsd:update${reset}"
-    fi
-    if [ "$stale_hooks" -gt 0 ] 2>/dev/null; then
-        [ -n "$gsd_alert" ] && gsd_alert+=" "
-        gsd_alert+="${red}⚠ stale hooks${reset}"
-    fi
+# ===== AI-generated session title (from transcript) =====
+ai_title=""
+transcript_path=$(echo "$input" | jq -r '.transcript_path // empty')
+if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
+    ai_title=$(grep '"type":"ai-title"' "$transcript_path" 2>/dev/null | tail -1 | \
+        jq -r '.aiTitle // empty' 2>/dev/null)
 fi
 
-# ===== Current Todo Task =====
-current_task=""
+# ===== Todo progress (done/total from latest session todo file) =====
+todo_progress=""
 todos_dir="$claude_config_dir/todos"
 if [ -n "$session_id" ] && [ -d "$todos_dir" ]; then
-    # Find the most recent todo file for this session (agent todos)
     latest_todo=$(find "$todos_dir" -name "${session_id}-agent-*.json" -type f 2>/dev/null | \
         while read -r f; do
             echo "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null) $f"
         done | sort -rn | head -1 | cut -d' ' -f2-)
 
     if [ -n "$latest_todo" ] && [ -f "$latest_todo" ]; then
-        # Extract activeForm from in_progress task
-        current_task=$(jq -r '.[] | select(.status == "in_progress") | .activeForm // empty' "$latest_todo" 2>/dev/null | head -1)
+        todo_total=$(jq 'length' "$latest_todo" 2>/dev/null)
+        todo_done=$(jq '[.[] | select(.status == "completed")] | length' "$latest_todo" 2>/dev/null)
+        if [ -n "$todo_total" ] && [ "$todo_total" -gt 0 ] 2>/dev/null; then
+            todo_progress="${todo_done}/${todo_total}"
+        fi
     fi
 fi
 
@@ -148,17 +166,20 @@ line1=""
 line2=""
 line3=""
 
-# Line 1: Model | [GSD Alert |] Current Task
+# Line 1: [🧠] Model | ai-title | ✓ todo | duration
+[ "$thinking_enabled" = "true" ] && line1+="🧠 "
 line1+="${dim}${model_name}${reset}"
-if [ -n "$gsd_alert" ]; then
-    line1+=" ${dim}|${reset} ${gsd_alert}"
-fi
-if [ -n "$current_task" ]; then
-    # Truncate task if too long (max 50 chars)
-    if [ ${#current_task} -gt 50 ]; then
-        current_task="${current_task:0:47}..."
+if [ -n "$ai_title" ]; then
+    if [ ${#ai_title} -gt 50 ]; then
+        ai_title="${ai_title:0:47}..."
     fi
-    line1+=" ${dim}|${reset} ${white}${current_task}${reset}"
+    line1+=" ${dim}|${reset} ${white}${ai_title}${reset}"
+fi
+if [ -n "$todo_progress" ]; then
+    line1+=" ${dim}|${reset} ${cyan}✓ ${todo_progress}${reset}"
+fi
+if [ "$total_duration_ms" -gt 0 ] 2>/dev/null; then
+    line1+=" ${dim}|${reset} ${dim}$(format_duration "$total_duration_ms")${reset}"
 fi
 
 # Current working directory and git info
@@ -175,7 +196,8 @@ if [ -n "$cwd" ]; then
     fi
 fi
 
-# Line 2: Effort Tokens | H | W | Extra
+# Line 2: [⚡] Effort Tokens | H | W | Extra
+[ "$fast_mode" = "true" ] && line2+="⚡ "
 case "$effort_level" in
     low)    line2+="${dim}low${reset} " ;;
     medium) line2+="${orange}med${reset} " ;;
@@ -209,6 +231,12 @@ if [ -n "$session_id" ]; then
             line3+="${white}${session_msg}${reset}"
         fi
     fi
+fi
+
+# Append Claude Code version to end of line 3
+if [ -n "$cc_version" ]; then
+    [ -n "$line3" ] && line3+=" ${dim}|${reset} "
+    line3+="${dim}v${cc_version}${reset}"
 fi
 
 # ===== Cross-platform OAuth token resolution (from statusline.sh) =====
