@@ -3,7 +3,7 @@
   "description": "Slash commands /setmsg and /setmemo for attaching session-scoped labels and multi-line memos to the Claude Code statusline.",
   "version": "1.0.0",
   "author": {
-    "name": "Daniel Oliveira"
+    "name": "HJH"
   },
   "repository": "https://github.com/chimd715/ClaudeCodeStatusLine",
   "keywords": ["statusline", "slash-commands", "memo"]
