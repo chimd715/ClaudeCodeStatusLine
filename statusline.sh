@@ -420,23 +420,42 @@ fi
 # ===== Multi-line memo (set via /setmemo) =====
 # Each line of the memo file becomes its own statusline row, dimmed and
 # capped to 100 chars wide / 20 rows tall to keep the prompt sane.
-memo_lines=""
-if [ -n "$session_id" ]; then
-    memo_file="$claude_config_dir/cache/statusline-memo/${session_id}.txt"
-    if [ -f "$memo_file" ]; then
-        memo_count=0
-        while IFS= read -r memo_line || [ -n "$memo_line" ]; do
-            memo_count=$((memo_count + 1))
-            if [ "$memo_count" -gt 20 ]; then
-                memo_lines+=$'\n'"${dim}│ … (memo truncated)${reset}"
-                break
-            fi
-            if [ ${#memo_line} -gt 100 ]; then
-                memo_line="${memo_line:0:97}..."
-            fi
-            memo_lines+=$'\n'"${dim}│ ${memo_line}${reset}"
-        done < "$memo_file"
+#
+# Lookup order:
+#   1. session-${session_id}.txt  — explicit session-scoped memo (/setmemo --session …)
+#   2. cwd-${hash}.txt            — directory-scoped memo (/setmemo …), survives /clear
+sha_short16() {
+    if command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$1" | shasum -a 256 | awk '{print $1}' | cut -c1-16
+    elif command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$1" | sha256sum | awk '{print $1}' | cut -c1-16
     fi
+}
+
+memo_lines=""
+memo_file=""
+if [ -n "$session_id" ]; then
+    candidate="$claude_config_dir/cache/statusline-memo/session-${session_id}.txt"
+    [ -f "$candidate" ] && memo_file="$candidate"
+fi
+if [ -z "$memo_file" ] && [ -n "$cwd" ]; then
+    cwd_key=$(sha_short16 "$cwd")
+    candidate="$claude_config_dir/cache/statusline-memo/cwd-${cwd_key}.txt"
+    [ -f "$candidate" ] && memo_file="$candidate"
+fi
+if [ -n "$memo_file" ]; then
+    memo_count=0
+    while IFS= read -r memo_line || [ -n "$memo_line" ]; do
+        memo_count=$((memo_count + 1))
+        if [ "$memo_count" -gt 20 ]; then
+            memo_lines+=$'\n'"${dim}│ … (memo truncated)${reset}"
+            break
+        fi
+        if [ ${#memo_line} -gt 100 ]; then
+            memo_line="${memo_line:0:97}..."
+        fi
+        memo_lines+=$'\n'"${dim}│ ${memo_line}${reset}"
+    done < "$memo_file"
 fi
 
 # Output three lines + optional memo rows

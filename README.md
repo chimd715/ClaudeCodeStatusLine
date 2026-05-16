@@ -42,18 +42,24 @@ Usage percentages are color-coded: green (<50%) → yellow (≥50%) → orange (
 Two slash commands attach session-scoped text to the statusline:
 
 ```
-/setmsg  refactoring auth flow             ← short label after the git branch on line 3
-/setmsg                                    ← clear the label
+/setmsg  refactoring auth flow                       ← short label after the git branch on line 3
+/setmsg                                              ← clear the label
 
-/setmemo TODO:\n- fix bug\n- update docs   ← multi-line memo below the status block
-/setmemo                                   ← clear the memo
+/setmemo TODO:\n- fix bug\n- update docs             ← cwd-scoped memo (default; survives /clear)
+/setmemo                                             ← clear the cwd-scoped memo
+
+/setmemo --session pinning this to the session       ← session-scoped memo (cleared when SID rotates)
+/setmemo --session                                   ← clear the session-scoped memo
 ```
 
 `/setmemo` uses `\n` as a literal line-break separator (interpreted via `printf '%b'`).
 
 Storage:
-- Labels → `~/.claude/cache/statusline-msg/<session_id>.txt`
-- Memos  → `~/.claude/cache/statusline-memo/<session_id>.txt`
+- Labels        → `~/.claude/cache/statusline-msg/<session_id>.txt`
+- Memos (cwd)   → `~/.claude/cache/statusline-memo/cwd-<sha256[:16] of $PWD>.txt`
+- Memos (session) → `~/.claude/cache/statusline-memo/session-<session_id>.txt`
+
+The statusline reads the session-scoped file first and falls back to the cwd-scoped file, so a session memo wins when both exist. The cwd-scoped default means memos survive `/clear` (which rotates the session ID).
 
 A SessionStart hook (`cleanup-statusline-msgs.py`) removes files older than 30 days from both directories — no manual cleanup needed.
 

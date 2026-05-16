@@ -348,7 +348,51 @@ if ($usageData) {
     $line2 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
 }
 
-# Output three lines
-Write-Host "${line1}`n${line2}`n${line3}"
+# ===== Multi-line memo (set via /setmemo) =====
+# Lookup order:
+#   1. session-<session_id>.txt  — explicit session-scoped memo (/setmemo --session …)
+#   2. cwd-<hash>.txt            — directory-scoped memo (/setmemo …), survives /clear
+function Get-ShaShort16([string]$value) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($value)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash($bytes)
+    } finally {
+        $sha.Dispose()
+    }
+    $hex = -join ($hash | ForEach-Object { $_.ToString("x2") })
+    return $hex.Substring(0, 16)
+}
+
+$memoLines = ""
+$memoFile = $null
+if ($sessionId) {
+    $candidate = Join-Path $claudeConfigDir "cache\statusline-memo\session-${sessionId}.txt"
+    if (Test-Path $candidate) { $memoFile = $candidate }
+}
+if (-not $memoFile -and $cwd) {
+    $cwdKey = Get-ShaShort16 $cwd
+    $candidate = Join-Path $claudeConfigDir "cache\statusline-memo\cwd-${cwdKey}.txt"
+    if (Test-Path $candidate) { $memoFile = $candidate }
+}
+if ($memoFile) {
+    $memoCount = 0
+    foreach ($memoLine in (Get-Content -LiteralPath $memoFile)) {
+        $memoCount++
+        if ($memoCount -gt 20) {
+            $memoLines += "`n${dim}│ … (memo truncated)${reset}"
+            break
+        }
+        if ($memoLine.Length -gt 100) {
+            $memoLine = $memoLine.Substring(0, 97) + "..."
+        }
+        $memoLines += "`n${dim}│ ${memoLine}${reset}"
+    }
+}
+
+# Output three lines + optional memo rows
+Write-Host -NoNewline "${line1}`n${line2}`n${line3}"
+if ($memoLines) { Write-Host -NoNewline $memoLines }
+Write-Host ""
 
 exit 0
