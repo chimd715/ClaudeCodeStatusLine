@@ -12,6 +12,8 @@
 #   - SessionStart cleanup hook in settings.json (only if missing)
 #   - known_marketplaces.json entry for the local marketplace
 #   - enabledPlugins entry in settings.json
+#   - extraKnownMarketplaces entry in settings.json (GitHub source)
+#   - installed_plugins.json entry registering the plugin under user scope
 #
 # Re-running is safe — every step is a no-op when already applied.
 
@@ -24,8 +26,11 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 PLUGIN_NAME="claude-code-statusline"
 MARKETPLACE_NAME="claude-code-statusline"
 PLUGIN_KEY="${PLUGIN_NAME}@${MARKETPLACE_NAME}"
+PLUGIN_VERSION="1.0.0"
+GITHUB_REPO="chimd715/ClaudeCodeStatusLine"
 MARKETPLACE_DIR="$CLAUDE_DIR/plugins/marketplaces/$MARKETPLACE_NAME"
 KNOWN_MARKETPLACES="$CLAUDE_DIR/plugins/known_marketplaces.json"
+INSTALLED_PLUGINS="$CLAUDE_DIR/plugins/installed_plugins.json"
 
 green='\033[0;32m'; yellow='\033[0;33m'; red='\033[0;31m'; dim='\033[2m'; reset='\033[0m'
 ok()    { printf "${green}✓${reset} %s\n" "$1"; }
@@ -128,6 +133,20 @@ else
     ok "Enabled plugin $PLUGIN_KEY"
 fi
 
+# 4d. extraKnownMarketplaces entry (GitHub source).
+desired_src=$(jq -n --arg repo "$GITHUB_REPO" '{source: "github", repo: $repo}')
+current_src=$(jq --arg name "$MARKETPLACE_NAME" '.extraKnownMarketplaces[$name].source // empty' "$SETTINGS")
+if [ "$current_src" = "$desired_src" ]; then
+    ok "extraKnownMarketplaces[$MARKETPLACE_NAME] already configured"
+else
+    tmp=$(mktemp)
+    jq --arg name "$MARKETPLACE_NAME" --arg repo "$GITHUB_REPO" '
+        .extraKnownMarketplaces //= {}
+        | .extraKnownMarketplaces[$name] = {source: {source: "github", repo: $repo}}
+    ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    ok "Registered extraKnownMarketplaces[$MARKETPLACE_NAME] → github:$GITHUB_REPO"
+fi
+
 # ---------- 5. known_marketplaces.json registration ----------
 mkdir -p "$(dirname "$KNOWN_MARKETPLACES")"
 [ -f "$KNOWN_MARKETPLACES" ] || echo '{}' > "$KNOWN_MARKETPLACES"
@@ -147,12 +166,74 @@ jq --arg name "$MARKETPLACE_NAME" \
     "$KNOWN_MARKETPLACES" > "$tmp" && mv "$tmp" "$KNOWN_MARKETPLACES"
 ok "Registered marketplace $MARKETPLACE_NAME → $MARKETPLACE_DIR"
 
-# ---------- 6. Smoke test ----------
+# ---------- 6. installed_plugins.json registration ----------
+mkdir -p "$(dirname "$INSTALLED_PLUGINS")"
+[ -f "$INSTALLED_PLUGINS" ] || echo '{"version": 2, "plugins": {}}' > "$INSTALLED_PLUGINS"
+jq empty "$INSTALLED_PLUGINS" 2>/dev/null || fail "$INSTALLED_PLUGINS is not valid JSON"
+
+# Capture git commit SHA from the source checkout so the entry mirrors what
+# `/plugin install` would record. Fall back to an empty string when the source
+# isn't a git repo.
+if git_sha=$(git -C "$SRC_DIR" rev-parse HEAD 2>/dev/null); then
+    :
+else
+    git_sha=""
+fi
+
+existing_user_entry=$(jq --arg k "$PLUGIN_KEY" '
+    (.plugins[$k] // []) | map(select(.scope == "user")) | .[0] // empty
+' "$INSTALLED_PLUGINS")
+
+tmp=$(mktemp)
+if [ -n "$existing_user_entry" ]; then
+    # Preserve installedAt; refresh installPath, version, lastUpdated, gitCommitSha.
+    jq --arg k "$PLUGIN_KEY" \
+       --arg loc "$MARKETPLACE_DIR" \
+       --arg ver "$PLUGIN_VERSION" \
+       --arg ts  "$now_iso" \
+       --arg sha "$git_sha" '
+        .version //= 2
+        | .plugins //= {}
+        | .plugins[$k] = ((.plugins[$k] // []) | map(
+            if .scope == "user" then
+                .installPath  = $loc
+                | .version    = $ver
+                | .lastUpdated = $ts
+                | (if $sha == "" then . else .gitCommitSha = $sha end)
+            else . end
+        ))
+    ' "$INSTALLED_PLUGINS" > "$tmp" && mv "$tmp" "$INSTALLED_PLUGINS"
+    ok "Refreshed installed_plugins.json entry for $PLUGIN_KEY (user scope)"
+else
+    jq --arg k "$PLUGIN_KEY" \
+       --arg loc "$MARKETPLACE_DIR" \
+       --arg ver "$PLUGIN_VERSION" \
+       --arg ts  "$now_iso" \
+       --arg sha "$git_sha" '
+        .version //= 2
+        | .plugins //= {}
+        | .plugins[$k] = ((.plugins[$k] // []) + [
+            (
+                {
+                    scope: "user",
+                    installPath: $loc,
+                    version: $ver,
+                    installedAt: $ts,
+                    lastUpdated: $ts
+                }
+                | (if $sha == "" then . else . + {gitCommitSha: $sha} end)
+            )
+        ])
+    ' "$INSTALLED_PLUGINS" > "$tmp" && mv "$tmp" "$INSTALLED_PLUGINS"
+    ok "Added installed_plugins.json entry for $PLUGIN_KEY (user scope)"
+fi
+
+# ---------- 7. Smoke test ----------
 echo '{}' | python3 "$CLAUDE_DIR/scripts/cleanup-statusline-msgs.py" \
     && ok "Cleanup script smoke test passed" \
     || warn "Cleanup script returned non-zero — check $CLAUDE_DIR/scripts/cleanup-statusline-msgs.py"
 
-# ---------- 7. Done ----------
+# ---------- 8. Done ----------
 echo
 printf "${green}Installation complete.${reset}\n\n"
 cat <<'EOF'
