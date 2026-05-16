@@ -8,4 +8,4 @@ cat > "$T" <<'__SETMEMO_ARG_EOF_8a3f5c__'
 $ARGUMENTS
 __SETMEMO_ARG_EOF_8a3f5c__
 DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-exec bash "$DIR/plugins/marketplaces/claude-code-statusline/scripts/setmemo.sh" "$(cat "$T")"`
+exec bash "$DIR/scripts/setmemo.sh" "$(cat "$T")"`

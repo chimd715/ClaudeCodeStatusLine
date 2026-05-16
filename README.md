@@ -80,7 +80,7 @@ A SessionStart hook (`cleanup-statusline-msgs.py`) removes files older than 30 d
 - `git` in PATH (for branch/diff info)
 - Claude Code with OAuth authentication (Pro/Max subscription)
 
-> `install.sh`, `/setmsg`, and `/setmemo` are bash-only. Windows users get the core statusline via `statusline.ps1`; the plugin slash commands require a bash environment (WSL, Git Bash, etc.).
+> `install.sh`, `/setmsg`, and `/setmemo` are bash-only. Windows users get the core statusline via `statusline.ps1`; the slash commands require a bash environment (WSL, Git Bash, etc.).
 
 ## Installation
 
@@ -93,11 +93,10 @@ A SessionStart hook (`cleanup-statusline-msgs.py`) removes files older than 30 d
 The installer is **idempotent** — re-run it any time to repair or update. It:
 - Copies `statusline.sh` → `~/.claude/`
 - Copies `cleanup-statusline-msgs.py` → `~/.claude/scripts/`
-- Copies the plugin tree (`.claude-plugin/`, `commands/`, `scripts/`) → `~/.claude/plugins/marketplaces/claude-code-statusline/`
+- Copies `scripts/setmsg.sh`, `scripts/setmemo.sh` → `~/.claude/scripts/`
+- Copies `commands/setmsg.md`, `commands/setmemo.md` → `~/.claude/commands/`
 - Adds `statusLine` to `~/.claude/settings.json` (only if unset)
 - Registers the SessionStart cleanup hook (only if missing)
-- Registers the local marketplace in `~/.claude/plugins/known_marketplaces.json`
-- Enables the plugin via `enabledPlugins` in `~/.claude/settings.json`
 
 Override the install location with `CLAUDE_CONFIG_DIR=/custom/path ./install.sh`.
 
@@ -123,15 +122,15 @@ After installation, restart Claude Code (or open a new session).
    }
    ```
 
-3. *(Optional, for `/setmsg` and `/setmemo`)* — install the plugin tree and cleanup hook:
+3. *(Optional, for `/setmsg` and `/setmemo`)* — install the scripts, commands, and cleanup hook:
 
    ```bash
-   mkdir -p ~/.claude/scripts \
-            ~/.claude/cache/statusline-msg ~/.claude/cache/statusline-memo \
-            ~/.claude/plugins/marketplaces/claude-code-statusline
+   mkdir -p ~/.claude/scripts ~/.claude/commands \
+            ~/.claude/cache/statusline-msg ~/.claude/cache/statusline-memo
    cp cleanup-statusline-msgs.py ~/.claude/scripts/
-   cp -R .claude-plugin commands scripts \
-       ~/.claude/plugins/marketplaces/claude-code-statusline/
+   cp scripts/setmsg.sh scripts/setmemo.sh ~/.claude/scripts/
+   cp commands/setmsg.md commands/setmemo.md ~/.claude/commands/
+   chmod +x ~/.claude/scripts/setmsg.sh ~/.claude/scripts/setmemo.sh
    ```
 
    Then merge this into `settings.json`:
@@ -149,30 +148,11 @@ After installation, restart Claude Code (or open a new session).
            ]
          }
        ]
-     },
-     "enabledPlugins": {
-       "claude-code-statusline@claude-code-statusline": true
      }
    }
    ```
 
-   And register the local marketplace by adding this to `~/.claude/plugins/known_marketplaces.json`:
-
-   ```json
-   {
-     "claude-code-statusline": {
-       "source": {"source": "local", "path": "<absolute path to this repo>"},
-       "installLocation": "<absolute path to ~/.claude/plugins/marketplaces/claude-code-statusline>"
-     }
-   }
-   ```
-
-4. Restart Claude Code. If the slash commands don't appear, run inside Claude Code:
-
-   ```
-   /plugin marketplace add claude-code-statusline
-   /plugin install claude-code-statusline@claude-code-statusline
-   ```
+4. Restart Claude Code to pick up the new slash commands.
 
 ### Manual setup — Windows
 
