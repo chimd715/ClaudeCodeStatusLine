@@ -14,10 +14,6 @@ if [ -z "$input" ]; then
     exit 0
 fi
 
-# DEBUG: dump stdin JSON for inspection (remove once done)
-debug_dump_dir="$HOME/.claude/debug"
-[ -d "$debug_dump_dir" ] && printf '%s' "$input" > "$debug_dump_dir/statusline-input.json" 2>/dev/null
-
 # ANSI colors matching oh-my-posh theme
 blue='\033[38;2;0;153;255m'
 orange='\033[38;2;255;176;85m'
