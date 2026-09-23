@@ -121,10 +121,13 @@ remain_comma=$(format_commas $(( size - current )))
 # Config directory (respects CLAUDE_CONFIG_DIR override)
 claude_config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# Check reasoning effort
+# Check reasoning effort (prefer the live level Claude Code passes on stdin)
 settings_path="$claude_config_dir/settings.json"
 effort_level="medium"
-if [ -n "$CLAUDE_CODE_EFFORT_LEVEL" ]; then
+live_effort=$(echo "$input" | jq -r '.effort.level // empty' 2>/dev/null)
+if [ -n "$live_effort" ]; then
+    effort_level="$live_effort"
+elif [ -n "$CLAUDE_CODE_EFFORT_LEVEL" ]; then
     effort_level="$CLAUDE_CODE_EFFORT_LEVEL"
 elif [ -f "$settings_path" ]; then
     effort_val=$(jq -r '.effortLevel // empty' "$settings_path" 2>/dev/null)
@@ -197,7 +200,10 @@ fi
 case "$effort_level" in
     low)    line2+="${dim}low${reset} " ;;
     medium) line2+="${orange}med${reset} " ;;
-    *)      line2+="${green}high${reset} " ;;
+    high)   line2+="${green}high${reset} " ;;
+    xhigh)  line2+="${green}xhigh${reset} " ;;
+    max)    line2+="${red}max${reset} " ;;
+    *)      line2+="${dim}${effort_level}${reset} " ;;
 esac
 line2+="${orange}${used_tokens}/${total_tokens}${reset}"
 

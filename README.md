@@ -21,7 +21,7 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 | Segment | Description |
 |---------|-------------|
 | ⚡ | Shown only when `/fast` mode is active |
-| **Effort** | Reasoning effort level (low / med / high) |
+| **Effort** | Active reasoning effort level (low / med / high / xhigh / max) |
 | **Tokens** | Used / total context window tokens |
 | **H** | 5-hour rate limit: percentage, progress bar, reset time |
 | **W** | Weekly (7-day) rate limit: percentage, progress bar, reset time |

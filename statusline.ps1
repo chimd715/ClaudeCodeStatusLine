@@ -106,9 +106,11 @@ $remainComma = Format-Commas ($size - $current)
 # Config directory (respects CLAUDE_CONFIG_DIR override)
 $claudeConfigDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE ".claude" }
 
-# Check reasoning effort
+# Check reasoning effort (prefer the live level Claude Code passes on stdin)
 $effortLevel = "medium"
-if ($env:CLAUDE_CODE_EFFORT_LEVEL) {
+if ($data.effort.level) {
+    $effortLevel = $data.effort.level
+} elseif ($env:CLAUDE_CODE_EFFORT_LEVEL) {
     $effortLevel = $env:CLAUDE_CODE_EFFORT_LEVEL
 } else {
     $settingsPath = Join-Path $claudeConfigDir "settings.json"
@@ -208,7 +210,10 @@ if ($fastMode) { $line2 += "⚡ " }
 switch ($effortLevel) {
     "low"    { $line2 += "${dim}low${reset} " }
     "medium" { $line2 += "${orange}med${reset} " }
-    default  { $line2 += "${green}high${reset} " }
+    "high"   { $line2 += "${green}high${reset} " }
+    "xhigh"  { $line2 += "${green}xhigh${reset} " }
+    "max"    { $line2 += "${red}max${reset} " }
+    default  { $line2 += "${dim}${effortLevel}${reset} " }
 }
 $line2 += "${orange}${usedTokens}/${totalTokens}${reset}"
 
