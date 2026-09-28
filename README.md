@@ -23,8 +23,8 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 | ⚡ | Shown only when `/fast` mode is active |
 | **Effort** | Active reasoning effort level (low / med / high / xhigh / max) |
 | **Tokens** | Used / total context window tokens |
-| **H** | 5-hour rate limit: percentage, progress bar, reset time |
-| **W** | Weekly (7-day) rate limit: percentage, progress bar, reset time |
+| **H** | 5-hour rate limit: percentage, progress bar, time left until reset (e.g., `2H 05m left`) |
+| **W** | Weekly (7-day) rate limit: percentage, progress bar, reset date/time (e.g., `10/05 17:59`) — switches to time left within 24h of the reset |
 | **E** | Extra usage: percentage, progress bar, credits spent / limit (if enabled) |
 
 **Line 3 — Project, label & version**
@@ -40,6 +40,25 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 Each line of the per-session memo (set via `/setmemo`) becomes its own dimmed row prefixed with `│`. Capped at 20 rows × 100 chars per line for sanity.
 
 Usage percentages are color-coded: green (<50%) → yellow (≥50%) → orange (≥70%) → red (≥90%).
+
+### Reset time format
+
+`STATUSLINE_RESET_STYLE` controls how the **H** and **W** reset times are shown:
+
+| Value | 5-hour (H) | Weekly (W) |
+|-------|------------|------------|
+| `countdown` *(default)* | `4H 12m left` | `10/05 17:59`, then `18H 30m left` within 24h of the reset |
+| `clock` | `21:00` | `10/05 17:59` |
+
+Set it in the `env` block of `~/.claude/settings.json` (Claude Code passes it to the statusline command):
+
+```json
+{
+  "env": {
+    "STATUSLINE_RESET_STYLE": "clock"
+  }
+}
+```
 
 ## Per-session label and memo
 

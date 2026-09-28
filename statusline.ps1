@@ -1,6 +1,6 @@
 # Three lines:
 #   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
-#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W 03/20 14:00 | E $5/$50
 #   Line 3: Dir | Branch changes | vX.Y.Z
 
 # Read input from stdin
@@ -331,11 +331,34 @@ if ($needsRefresh) {
     }
 }
 
-# Format ISO reset time to compact local time
+# Reset time display style (set via settings.json → "env": {"STATUSLINE_RESET_STYLE": "clock"})
+#   countdown (default) - within 24h of a reset, show time left ("4H 12m left");
+#                         further out, fall back to the clock time (weekly: "10/05 17:59")
+#   clock               - always show the clock time (5-hour: "21:00", weekly: "10/05 17:59")
+$resetStyle = if ($env:STATUSLINE_RESET_STYLE) { $env:STATUSLINE_RESET_STYLE } else { "countdown" }
+$countdownWindowSec = 86400
+
+# Format seconds until reset as "4H 12m left" / "35m left"
+# Minutes round up so the last partial minute still reads "1m left".
+function Format-TimeLeft([long]$secs) {
+    if ($secs -lt 0) { $secs = 0 }
+    $totalM = [long][math]::Floor(($secs + 59) / 60)
+    $h = [long][math]::Floor($totalM / 60)
+    $m = $totalM % 60
+    if ($h -gt 0) { return "{0}H {1:D2}m left" -f $h, $m }
+    else          { return "{0}m left" -f $m }
+}
+
+# Format ISO reset time to compact local time (or time left, in countdown style)
 function Format-ResetTime([string]$isoStr, [string]$style) {
     if (-not $isoStr -or $isoStr -eq "null") { return $null }
     try {
-        $dt = [DateTimeOffset]::Parse($isoStr).LocalDateTime
+        $resetAt = [DateTimeOffset]::Parse($isoStr)
+        if ($resetStyle -ne "clock") {
+            $secsLeft = [long][math]::Floor(($resetAt - [DateTimeOffset]::Now).TotalSeconds)
+            if ($secsLeft -lt $countdownWindowSec) { return Format-TimeLeft $secsLeft }
+        }
+        $dt = $resetAt.LocalDateTime
         switch ($style) {
             "time"     { return $dt.ToString("HH:mm") }
             "datetime" { return $dt.ToString("MM/dd HH:mm") }

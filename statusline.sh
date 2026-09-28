@@ -1,7 +1,7 @@
 #!/bin/bash
 # Output:
 #   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
-#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 21:00 | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W 03/20 14:00 | E $5/$50
 #   Line 3: Dir | Branch changes | [/setmsg session label] | vX.Y.Z
 #   Line 4+: Optional multi-line memo set via /setmemo
 
@@ -368,7 +368,29 @@ iso_to_epoch() {
     return 1
 }
 
-# Format ISO reset time to compact local time
+# Reset time display style (set via settings.json → "env": {"STATUSLINE_RESET_STYLE": "clock"})
+#   countdown (default) — within 24h of a reset, show time left ("4H 12m left");
+#                         further out, fall back to the clock time (weekly: "10/05 17:59")
+#   clock               — always show the clock time (5-hour: "21:00", weekly: "10/05 17:59")
+reset_style="${STATUSLINE_RESET_STYLE:-countdown}"
+countdown_window=86400  # seconds
+
+# Format seconds until reset as "4H 12m left" / "35m left"
+# Minutes round up so the last partial minute still reads "1m left".
+format_time_left() {
+    local secs=$1
+    [ "$secs" -lt 0 ] && secs=0
+    local total_m=$(( (secs + 59) / 60 ))
+    local h=$(( total_m / 60 ))
+    local m=$(( total_m % 60 ))
+    if [ "$h" -gt 0 ]; then
+        printf "%dH %02dm left" "$h" "$m"
+    else
+        printf "%dm left" "$m"
+    fi
+}
+
+# Format ISO reset time to compact local time (or time left, in countdown style)
 # Usage: format_reset_time <iso_string> <style: time|datetime|date>
 format_reset_time() {
     local iso_str="$1"
@@ -379,6 +401,14 @@ format_reset_time() {
     local epoch
     epoch=$(iso_to_epoch "$iso_str")
     [ -z "$epoch" ] && return
+
+    if [ "$reset_style" != "clock" ]; then
+        local secs_left=$(( epoch - $(date +%s) ))
+        if [ "$secs_left" -lt "$countdown_window" ]; then
+            format_time_left "$secs_left"
+            return
+        fi
+    fi
 
     # Format based on style
     # Try GNU date first (Linux), then BSD date (macOS)
