@@ -1,6 +1,6 @@
 # Three lines:
 #   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
-#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W Fri 03/20 14:00 | E $5/$50
 #   Line 3: Dir | Branch changes | vX.Y.Z
 
 # Read input from stdin
@@ -21,13 +21,19 @@ $green  = "${esc}[38;2;0;160;0m"
 $cyan   = "${esc}[38;2;46;149;153m"
 $red    = "${esc}[38;2;255;85;85m"
 $yellow = "${esc}[38;2;230;200;0m"
+$purple = "${esc}[38;2;167;139;250m"
 $white  = "${esc}[38;2;220;220;220m"
 $dim    = "${esc}[2m"
 $reset  = "${esc}[0m"
 
 # Format token counts (e.g., 50k / 200k)
 function Format-Tokens([long]$num) {
-    if ($num -ge 1000000) { return "{0:F1}m" -f ($num / 1000000) }
+    if ($num -ge 1000000) {
+        # Drop a trailing .0 so 1,000,000 reads "1m" rather than "1.0m"
+        $val = [math]::Round($num / 1000000, 1)
+        if ($val -eq [math]::Floor($val)) { return "{0:F0}m" -f $val }
+        return "{0:F1}m" -f $val
+    }
     elseif ($num -ge 1000) { return "{0:F0}k" -f ($num / 1000) }
     else { return "$num" }
 }
@@ -69,10 +75,24 @@ function Coalesce($value, $default) {
     if ($null -ne $value) { return $value } else { return $default }
 }
 
+# First 16 hex chars of SHA-256 (used for per-cwd memo and per-config-dir cache keys)
+function Get-ShaShort16([string]$value) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($value)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash($bytes)
+    } finally {
+        $sha.Dispose()
+    }
+    $hex = -join ($hash | ForEach-Object { $_.ToString("x2") })
+    return $hex.Substring(0, 16)
+}
+
 # ===== Extract data from JSON =====
 $data = $input | ConvertFrom-Json
 
 $modelName = if ($data.model.display_name) { $data.model.display_name } else { "Claude" }
+$modelName = ($modelName -replace '\s*\((\d+\.?\d*[kKmM])\s+context\)', ' $1').Trim()  # "(1M context)" → "1M"
 $sessionId = $data.session_id
 $ccVersion = $data.version
 $thinkingEnabled = ($data.thinking.enabled -eq $true)
@@ -211,7 +231,7 @@ switch ($effortLevel) {
     "low"    { $line2 += "${dim}low${reset} " }
     "medium" { $line2 += "${orange}med${reset} " }
     "high"   { $line2 += "${green}high${reset} " }
-    "xhigh"  { $line2 += "${green}xhigh${reset} " }
+    "xhigh"  { $line2 += "${purple}xhigh${reset} " }
     "max"    { $line2 += "${red}max${reset} " }
     default  { $line2 += "${dim}${effortLevel}${reset} " }
 }
@@ -287,28 +307,48 @@ function Get-OAuthToken {
     return $null
 }
 
-# ===== Usage limits with caching =====
+# ===== Usage limits (line 2) =====
+# Sources, in order of preference:
+#   1. rate_limits in Claude Code's stdin JSON - live, needs no OAuth token or network
+#   2. Whichever is newer of the last stdin snapshot and the OAuth usage API cache
+# The API is still polled (throttled to cacheMaxAge) even when stdin has rate_limits,
+# because extra_usage is only exposed there. Cache files are keyed by config dir so
+# accounts run via different CLAUDE_CONFIG_DIRs don't overwrite each other.
 $cacheDir = Join-Path $env:TEMP "claude"
-$cacheFile = Join-Path $cacheDir "statusline-usage-cache.json"
+$cacheKey = Get-ShaShort16 $claudeConfigDir
+$cacheFile = Join-Path $cacheDir "statusline-usage-cache-${cacheKey}.json"
+$builtinCacheFile = Join-Path $cacheDir "statusline-usage-builtin-${cacheKey}.json"
 $cacheMaxAge = 60  # seconds between API calls
 
 if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
 
-$needsRefresh = $true
-$usageData = $null
+# Parse a usage cache file; $null when missing, empty, or not usage-shaped
+function Read-UsageFile([string]$path) {
+    try {
+        $u = Get-Content $path -Raw -ErrorAction Stop | ConvertFrom-Json
+        if ($u.five_hour -or $u.seven_day) { return $u }
+    } catch {}
+    return $null
+}
 
-# Check cache
-if (Test-Path $cacheFile) {
-    $cacheMtime = (Get-Item $cacheFile).LastWriteTime
-    $cacheAge = ((Get-Date) - $cacheMtime).TotalSeconds
-    if ($cacheAge -lt $cacheMaxAge) {
-        $needsRefresh = $false
-        $usageData = Get-Content $cacheFile -Raw
-    }
+$needsRefresh = $true
+$usage = $null
+
+# Check cache - shared across all Claude Code instances to avoid rate limits
+if ((Test-Path $cacheFile) -and (Get-Item $cacheFile).Length -gt 0) {
+    $cacheAge = ((Get-Date) - (Get-Item $cacheFile).LastWriteTime).TotalSeconds
+    if ($cacheAge -lt $cacheMaxAge) { $needsRefresh = $false }
+    $usage = Read-UsageFile $cacheFile
 }
 
 # Fetch fresh data if cache is stale
 if ($needsRefresh) {
+    # Touch cache immediately so other instances don't also fetch
+    try {
+        if (Test-Path $cacheFile) { (Get-Item $cacheFile).LastWriteTime = Get-Date }
+        else { New-Item -ItemType File -Path $cacheFile -Force | Out-Null }
+    } catch {}
+
     $token = Get-OAuthToken
     if ($token) {
         try {
@@ -321,20 +361,68 @@ if ($needsRefresh) {
             }
             $response = Invoke-RestMethod -Uri "https://api.anthropic.com/api/oauth/usage" `
                 -Headers $headers -Method Get -TimeoutSec 10 -ErrorAction Stop
-            $usageData = $response | ConvertTo-Json -Depth 10
-            $usageData | Set-Content $cacheFile -Force
+            # Only cache valid usage responses (not error/rate-limit JSON)
+            if ($response.five_hour) {
+                $response | ConvertTo-Json -Depth 10 | Set-Content $cacheFile -Force
+                $usage = $response
+            }
         } catch {}
     }
-    # Fall back to stale cache
-    if (-not $usageData -and (Test-Path $cacheFile)) {
-        $usageData = Get-Content $cacheFile -Raw
+
+    # A failed fetch leaves the touched lock file empty - remove it so the next render
+    # retries instead of waiting out a full cacheMaxAge window.
+    if ((Test-Path $cacheFile) -and (Get-Item $cacheFile).Length -eq 0) {
+        Remove-Item $cacheFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Convert one stdin rate_limits window to the API response shape (epoch resets_at → ISO)
+function Convert-RateLimitWindow($w) {
+    if ($null -eq $w -or $null -eq $w.used_percentage) { return $null }
+    $resetsAt = $null
+    try {
+        if ([long]$w.resets_at -gt 0) {
+            $resetsAt = [DateTimeOffset]::FromUnixTimeSeconds([long]$w.resets_at).ToString(
+                "yyyy-MM-dd'T'HH:mm:ss'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+    } catch {}
+    return [pscustomobject]@{ utilization = [double]$w.used_percentage; resets_at = $resetsAt }
+}
+
+# All-zero percentages with no reset times usually mean Claude Code failed to fetch its
+# limits, so ignore stdin then and fall back to the caches. A genuine 0% right after a
+# reset still carries resets_at and is trusted.
+$rateLimits = $data.rate_limits
+$effectiveBuiltin = $false
+foreach ($w in @($rateLimits.five_hour, $rateLimits.seven_day)) {
+    if ($null -eq $w -or $null -eq $w.used_percentage) { continue }
+    try {
+        if ([double]$w.used_percentage -gt 0 -or [long]$w.resets_at -gt 0) { $effectiveBuiltin = $true }
+    } catch {}
+}
+
+if ($effectiveBuiltin) {
+    # A window missing from stdin is filled from the API cache; extra_usage always is
+    $builtinUsage = [pscustomobject]@{
+        five_hour   = Coalesce (Convert-RateLimitWindow $rateLimits.five_hour) $usage.five_hour
+        seven_day   = Coalesce (Convert-RateLimitWindow $rateLimits.seven_day) $usage.seven_day
+        extra_usage = $usage.extra_usage
+    }
+    $usage = $builtinUsage
+    # Snapshot for renders where stdin rate_limits come back missing or zeroed
+    try { $builtinUsage | ConvertTo-Json -Depth 10 -Compress | Set-Content $builtinCacheFile -Force } catch {}
+} elseif (Test-Path $builtinCacheFile) {
+    if (-not $usage -or -not (Test-Path $cacheFile) -or
+        (Get-Item $builtinCacheFile).LastWriteTime -gt (Get-Item $cacheFile).LastWriteTime) {
+        $snapshot = Read-UsageFile $builtinCacheFile
+        if ($snapshot) { $usage = $snapshot }
     }
 }
 
 # Reset time display style (set via settings.json → "env": {"STATUSLINE_RESET_STYLE": "clock"})
 #   countdown (default) - within 24h of a reset, show time left ("4H 12m left");
-#                         further out, fall back to the clock time (weekly: "10/05 17:59")
-#   clock               - always show the clock time (5-hour: "21:00", weekly: "10/05 17:59")
+#                         further out, fall back to the clock time (weekly: "Mon 10/05 17:59")
+#   clock               - always show the clock time (5-hour: "21:00", weekly: "Mon 10/05 17:59")
 $resetStyle = if ($env:STATUSLINE_RESET_STYLE) { $env:STATUSLINE_RESET_STYLE } else { "countdown" }
 $countdownWindowSec = 86400
 
@@ -350,10 +438,11 @@ function Format-TimeLeft([long]$secs) {
 }
 
 # Format ISO reset time to compact local time (or time left, in countdown style)
-function Format-ResetTime([string]$isoStr, [string]$style) {
-    if (-not $isoStr -or $isoStr -eq "null") { return $null }
+# (PS7's ConvertFrom-Json turns ISO strings into DateTime, so accept either)
+function Format-ResetTime($resetsAt, [string]$style) {
+    if (-not $resetsAt -or "$resetsAt" -eq "null") { return $null }
     try {
-        $resetAt = [DateTimeOffset]::Parse($isoStr)
+        $resetAt = if ($resetsAt -is [datetime]) { [DateTimeOffset]$resetsAt } else { [DateTimeOffset]::Parse("$resetsAt") }
         if ($resetStyle -ne "clock") {
             $secsLeft = [long][math]::Floor(($resetAt - [DateTimeOffset]::Now).TotalSeconds)
             if ($secsLeft -lt $countdownWindowSec) { return Format-TimeLeft $secsLeft }
@@ -361,7 +450,7 @@ function Format-ResetTime([string]$isoStr, [string]$style) {
         $dt = $resetAt.LocalDateTime
         switch ($style) {
             "time"     { return $dt.ToString("HH:mm") }
-            "datetime" { return $dt.ToString("MM/dd HH:mm") }
+            "datetime" { return $dt.ToString("ddd MM/dd HH:mm", [System.Globalization.CultureInfo]::InvariantCulture) }
             default    { return $dt.ToString("MM/dd") }
         }
     } catch { return $null }
@@ -369,69 +458,49 @@ function Format-ResetTime([string]$isoStr, [string]$style) {
 
 $sep = " ${dim}|${reset} "
 
-if ($usageData) {
-    try {
-        $usage = if ($usageData -is [string]) { $usageData | ConvertFrom-Json } else { $usageData }
+# Append one rate-limit window ("45% ████░░░░ H 2H 05m left"), or a placeholder when
+# the current source has no data for it
+function Format-UsageWindow($window, [string]$label, [string]$style) {
+    if ($null -eq $window -or $null -eq $window.utilization) {
+        return "${sep}${dim}-% ░░░░░░░░${reset} ${white}${label}${reset}"
+    }
+    $pct = [math]::Floor([double]$window.utilization)
+    $resetStr = Format-ResetTime $window.resets_at $style
+    $color = Get-UsageColor $pct
 
-        # ---- 5-hour (current) ----
-        $fiveHourPct = [math]::Floor([double](Coalesce $usage.five_hour.utilization 0))
-        $fiveHourResetIso = $usage.five_hour.resets_at
-        $fiveHourReset = Format-ResetTime $fiveHourResetIso "time"
-        $fiveHourColor = Get-UsageColor $fiveHourPct
-
-        $fiveHourBar = Get-ProgressBar $fiveHourPct 8 $fiveHourColor
-        $line2 += "${sep}${fiveHourColor}${fiveHourPct}%${reset} ${fiveHourBar} ${white}H${reset}"
-        if ($fiveHourReset) { $line2 += " ${dim}${fiveHourReset}${reset}" }
-
-        # ---- 7-day (weekly) ----
-        $sevenDayPct = [math]::Floor([double](Coalesce $usage.seven_day.utilization 0))
-        $sevenDayResetIso = $usage.seven_day.resets_at
-        $sevenDayReset = Format-ResetTime $sevenDayResetIso "datetime"
-        $sevenDayColor = Get-UsageColor $sevenDayPct
-
-        $sevenDayBar = Get-ProgressBar $sevenDayPct 8 $sevenDayColor
-        $line2 += "${sep}${sevenDayColor}${sevenDayPct}%${reset} ${sevenDayBar} ${white}W${reset}"
-        if ($sevenDayReset) { $line2 += " ${dim}${sevenDayReset}${reset}" }
-
-        # ---- Extra usage ----
-        $extraEnabled = $usage.extra_usage.is_enabled
-        if ($extraEnabled -eq $true) {
-            $extraPct = [math]::Floor([double](Coalesce $usage.extra_usage.utilization 0))
-            $extraUsedRaw = $usage.extra_usage.used_credits
-            $extraLimitRaw = $usage.extra_usage.monthly_limit
-
-            if ($null -ne $extraUsedRaw -and $null -ne $extraLimitRaw) {
-                $extraUsed = "{0:F2}" -f ([double]$extraUsedRaw / 100)
-                $extraLimit = "{0:F2}" -f ([double]$extraLimitRaw / 100)
-                $extraColor = Get-UsageColor $extraPct
-                $extraBar = Get-ProgressBar $extraPct 6 $extraColor
-                $line2 += "${sep}${extraColor}${extraPct}%${reset} ${extraBar} ${white}E${reset} ${dim}`$${extraUsed}/`$${extraLimit}${reset}"
-            } else {
-                $line2 += "${sep}${white}E${reset} ${green}on${reset}"
-            }
-        }
-    } catch {}
-} else {
-    # No valid usage data - show placeholders
-    $line2 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
-    $line2 += "${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
+    $bar = Get-ProgressBar $pct 8 $color
+    $segment = "${sep}${color}${pct}%${reset} ${bar} ${white}${label}${reset}"
+    if ($resetStr) { $segment += " ${dim}${resetStr}${reset}" }
+    return $segment
 }
+
+$line2 += Format-UsageWindow $usage.five_hour "H" "time"      # 5-hour (current)
+$line2 += Format-UsageWindow $usage.seven_day "W" "datetime"  # 7-day (weekly)
+
+try {
+    # ---- Extra usage ----
+    $extraEnabled = $usage.extra_usage.is_enabled
+    if ($extraEnabled -eq $true) {
+        $extraPct = [math]::Floor([double](Coalesce $usage.extra_usage.utilization 0))
+        $extraUsedRaw = $usage.extra_usage.used_credits
+        $extraLimitRaw = $usage.extra_usage.monthly_limit
+
+        if ($null -ne $extraUsedRaw -and $null -ne $extraLimitRaw) {
+            $extraUsed = "{0:F2}" -f ([double]$extraUsedRaw / 100)
+            $extraLimit = "{0:F2}" -f ([double]$extraLimitRaw / 100)
+            $extraColor = Get-UsageColor $extraPct
+            $extraBar = Get-ProgressBar $extraPct 6 $extraColor
+            $line2 += "${sep}${extraColor}${extraPct}%${reset} ${extraBar} ${white}E${reset} ${dim}`$${extraUsed}/`$${extraLimit}${reset}"
+        } else {
+            $line2 += "${sep}${white}E${reset} ${green}on${reset}"
+        }
+    }
+} catch {}
 
 # ===== Multi-line memo (set via /setmemo) =====
 # Lookup order:
 #   1. session-<session_id>.txt  — explicit session-scoped memo (/setmemo --session …)
 #   2. cwd-<hash>.txt            — directory-scoped memo (/setmemo …), survives /clear
-function Get-ShaShort16([string]$value) {
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($value)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $hash = $sha.ComputeHash($bytes)
-    } finally {
-        $sha.Dispose()
-    }
-    $hex = -join ($hash | ForEach-Object { $_.ToString("x2") })
-    return $hex.Substring(0, 16)
-}
 
 $memoLines = ""
 $memoFile = $null

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Output:
 #   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
-#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W 03/20 14:00 | E $5/$50
+#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W Fri 03/20 14:00 | E $5/$50
 #   Line 3: Dir | Branch changes | [/setmsg session label] | vX.Y.Z
 #   Line 4+: Optional multi-line memo set via /setmemo
 
@@ -21,6 +21,7 @@ green='\033[38;2;0;160;0m'
 cyan='\033[38;2;46;149;153m'
 red='\033[38;2;255;85;85m'
 yellow='\033[38;2;230;200;0m'
+purple='\033[38;2;167;139;250m'
 white='\033[38;2;220;220;220m'
 dim='\033[2m'
 reset='\033[0m'
@@ -29,7 +30,8 @@ reset='\033[0m'
 format_tokens() {
     local num=$1
     if [ "$num" -ge 1000000 ]; then
-        awk "BEGIN {printf \"%.1fm\", $num / 1000000}"
+        # Drop a trailing .0 so 1,000,000 reads "1m" rather than "1.0m"
+        awk "BEGIN {v=sprintf(\"%.1f\",$num/1000000)+0; if(v==int(v)) printf \"%dm\",v; else printf \"%.1fm\",v}"
     elif [ "$num" -ge 1000 ]; then
         awk "BEGIN {printf \"%.0fk\", $num / 1000}"
     else
@@ -87,8 +89,23 @@ progress_bar() {
     printf "${color}${bar}${reset}"
 }
 
+# First 16 hex chars of SHA-256 (used for per-cwd memo and per-config-dir cache keys)
+sha_short16() {
+    if command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$1" | shasum -a 256 | awk '{print $1}' | cut -c1-16
+    elif command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$1" | sha256sum | awk '{print $1}' | cut -c1-16
+    fi
+}
+
+# File modification time as epoch seconds (GNU stat, then BSD stat)
+file_mtime() {
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
 # ===== Extract data from JSON =====
 model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
+model_name=$(echo "$model_name" | sed 's/ *(\([0-9.]*[kKmM]*\) context)/ \1/')  # "(1M context)" → "1M"
 session_id=$(echo "$input" | jq -r '.session_id // empty')
 cc_version=$(echo "$input" | jq -r '.version // empty')
 thinking_enabled=$(echo "$input" | jq -r '.thinking.enabled // false')
@@ -201,7 +218,7 @@ case "$effort_level" in
     low)    line2+="${dim}low${reset} " ;;
     medium) line2+="${orange}med${reset} " ;;
     high)   line2+="${green}high${reset} " ;;
-    xhigh)  line2+="${green}xhigh${reset} " ;;
+    xhigh)  line2+="${purple}xhigh${reset} " ;;
     max)    line2+="${red}max${reset} " ;;
     *)      line2+="${dim}${effort_level}${reset} " ;;
 esac
@@ -252,10 +269,15 @@ get_oauth_token() {
         return 0
     fi
 
-    # 2. macOS Keychain
+    # 2. macOS Keychain (Claude Code appends a SHA-256 prefix of CLAUDE_CONFIG_DIR to the
+    #    service name when a custom config dir is in use)
     if command -v security >/dev/null 2>&1; then
+        local keychain_svc="Claude Code-credentials"
+        if [ -n "$CLAUDE_CONFIG_DIR" ]; then
+            keychain_svc="Claude Code-credentials-$(sha_short16 "$CLAUDE_CONFIG_DIR" | cut -c1-8)"
+        fi
         local blob
-        blob=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+        blob=$(security find-generic-password -s "$keychain_svc" -w 2>/dev/null)
         if [ -n "$blob" ]; then
             token=$(echo "$blob" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
             if [ -n "$token" ] && [ "$token" != "null" ]; then
@@ -291,19 +313,26 @@ get_oauth_token() {
     echo ""
 }
 
-# ===== LINE 2 & 3: Usage limits with progress bars (cached) =====
-cache_file="/tmp/claude/statusline-usage-cache.json"
+# ===== Usage limits (line 2) =====
+# Sources, in order of preference:
+#   1. rate_limits in Claude Code's stdin JSON — live, needs no OAuth token or network
+#   2. Whichever is newer of the last stdin snapshot and the OAuth usage API cache
+# The API is still polled (throttled to cache_max_age) even when stdin has rate_limits,
+# because extra_usage is only exposed there. Cache files are keyed by config dir so
+# accounts run via different CLAUDE_CONFIG_DIRs don't overwrite each other.
+cache_dir="/tmp/claude"
+cache_key=$(sha_short16 "$claude_config_dir")
+cache_file="$cache_dir/statusline-usage-cache-${cache_key}.json"
+builtin_cache_file="$cache_dir/statusline-usage-builtin-${cache_key}.json"
 cache_max_age=60  # seconds between API calls
-mkdir -p /tmp/claude
+mkdir -p "$cache_dir"
 
 needs_refresh=true
 usage_data=""
 
 # Check cache — shared across all Claude Code instances to avoid rate limits
-if [ -f "$cache_file" ]; then
-    cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null)
-    now=$(date +%s)
-    cache_age=$(( now - cache_mtime ))
+if [ -s "$cache_file" ]; then
+    cache_age=$(( $(date +%s) - $(file_mtime "$cache_file") ))
     if [ "$cache_age" -lt "$cache_max_age" ]; then
         needs_refresh=false
     fi
@@ -330,6 +359,39 @@ if $needs_refresh; then
             echo "$response" > "$cache_file"
         fi
     fi
+    # A failed fetch leaves the touched lock file empty — remove it so the next render
+    # retries instead of waiting out a full cache_max_age window.
+    [ -f "$cache_file" ] && [ ! -s "$cache_file" ] && rm -f "$cache_file"
+fi
+
+echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>&1 || usage_data=""
+
+# Normalize stdin rate_limits into the API response shape (epoch resets_at → ISO) so one
+# renderer serves every source; a window missing from stdin is filled from the API cache.
+# All-zero percentages with no reset times usually mean Claude Code failed to fetch its
+# limits, so that yields nothing and we fall back to the caches. A genuine 0% right after
+# a reset still carries resets_at and is trusted.
+builtin_data=$(echo "$input" | jq -c --argjson cached "${usage_data:-null}" '
+    def win($w): if $w.used_percentage == null then null else
+        {utilization: $w.used_percentage,
+         resets_at: ($w.resets_at | if type == "number" and . > 0 then todate else null end)} end;
+    (.rate_limits // {}) as $rl
+    | [$rl.five_hour, $rl.seven_day] | map(select(.used_percentage != null))
+    | if length > 0 and any(.used_percentage > 0 or ((.resets_at | type) == "number" and .resets_at > 0))
+      then {five_hour: (win($rl.five_hour) // $cached.five_hour),
+            seven_day: (win($rl.seven_day) // $cached.seven_day),
+            extra_usage: $cached.extra_usage}
+      else empty end
+' 2>/dev/null)
+
+if [ -n "$builtin_data" ]; then
+    usage_data="$builtin_data"
+    # Snapshot for renders where stdin rate_limits come back missing or zeroed
+    echo "$builtin_data" > "$builtin_cache_file" 2>/dev/null
+elif [ -s "$builtin_cache_file" ] && \
+     { [ -z "$usage_data" ] || [ "$(file_mtime "$builtin_cache_file")" -gt "$(file_mtime "$cache_file")" ]; }; then
+    snapshot=$(cat "$builtin_cache_file" 2>/dev/null)
+    echo "$snapshot" | jq -e '.five_hour or .seven_day' >/dev/null 2>&1 && usage_data="$snapshot"
 fi
 
 # Cross-platform ISO to epoch conversion
@@ -370,8 +432,8 @@ iso_to_epoch() {
 
 # Reset time display style (set via settings.json → "env": {"STATUSLINE_RESET_STYLE": "clock"})
 #   countdown (default) — within 24h of a reset, show time left ("4H 12m left");
-#                         further out, fall back to the clock time (weekly: "10/05 17:59")
-#   clock               — always show the clock time (5-hour: "21:00", weekly: "10/05 17:59")
+#                         further out, fall back to the clock time (weekly: "Mon 10/05 17:59")
+#   clock               — always show the clock time (5-hour: "21:00", weekly: "Mon 10/05 17:59")
 reset_style="${STATUSLINE_RESET_STYLE:-countdown}"
 countdown_window=86400  # seconds
 
@@ -422,8 +484,8 @@ format_reset_time() {
             formatted=$(date -j -r "$epoch" +"%H:%M" 2>/dev/null)
             ;;
         datetime)
-            formatted=$(date -d "@$epoch" +"%m/%d %H:%M" 2>/dev/null) || \
-            formatted=$(date -j -r "$epoch" +"%m/%d %H:%M" 2>/dev/null)
+            formatted=$(LC_TIME=C date -d "@$epoch" +"%a %m/%d %H:%M" 2>/dev/null) || \
+            formatted=$(LC_TIME=C date -j -r "$epoch" +"%a %m/%d %H:%M" 2>/dev/null)
             ;;
         *)
             formatted=$(date -d "@$epoch" +"%m/%d" 2>/dev/null) || \
@@ -435,46 +497,43 @@ format_reset_time() {
 
 sep=" ${dim}|${reset} "
 
-if [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>&1; then
-    # ---- 5-hour (current) ----
-    five_hour_pct=$(echo "$usage_data" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
-    five_hour_reset_iso=$(echo "$usage_data" | jq -r '.five_hour.resets_at // empty')
-    five_hour_reset=$(format_reset_time "$five_hour_reset_iso" "time")
-    five_hour_color=$(usage_color "$five_hour_pct")
-
-    five_hour_bar=$(progress_bar "$five_hour_pct" 8 "$five_hour_color")
-    line2+="${sep}${five_hour_color}${five_hour_pct}%${reset} ${five_hour_bar} ${white}H${reset}"
-    [ -n "$five_hour_reset" ] && line2+=" ${dim}${five_hour_reset}${reset}"
-
-    # ---- 7-day (weekly) ----
-    seven_day_pct=$(echo "$usage_data" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
-    seven_day_reset_iso=$(echo "$usage_data" | jq -r '.seven_day.resets_at // empty')
-    seven_day_reset=$(format_reset_time "$seven_day_reset_iso" "datetime")
-    seven_day_color=$(usage_color "$seven_day_pct")
-
-    seven_day_bar=$(progress_bar "$seven_day_pct" 8 "$seven_day_color")
-    line2+="${sep}${seven_day_color}${seven_day_pct}%${reset} ${seven_day_bar} ${white}W${reset}"
-    [ -n "$seven_day_reset" ] && line2+=" ${dim}${seven_day_reset}${reset}"
-
-    # ---- Extra usage ----
-    extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
-    if [ "$extra_enabled" = "true" ]; then
-        extra_pct=$(echo "$usage_data" | jq -r '.extra_usage.utilization // 0' | awk '{printf "%.0f", $1}')
-        extra_used=$(echo "$usage_data" | jq -r '.extra_usage.used_credits // 0' | LC_NUMERIC=C awk '{printf "%.2f", $1/100}')
-        extra_limit=$(echo "$usage_data" | jq -r '.extra_usage.monthly_limit // 0' | LC_NUMERIC=C awk '{printf "%.2f", $1/100}')
-        # Validate: if values are empty or contain unexpanded variables, show simple "enabled" label
-        if [ -n "$extra_used" ] && [ -n "$extra_limit" ] && [[ "$extra_used" != *'$'* ]] && [[ "$extra_limit" != *'$'* ]]; then
-            extra_color=$(usage_color "$extra_pct")
-            extra_bar=$(progress_bar "$extra_pct" 6 "$extra_color")
-            line2+="${sep}${extra_color}${extra_pct}%${reset} ${extra_bar} ${white}E${reset} ${dim}\$${extra_used}/\$${extra_limit}${reset}"
-        else
-            line2+="${sep}${white}E${reset} ${green}on${reset}"
-        fi
+# Append one rate-limit window ("45% ████░░░░ H 2H 05m left"), or a placeholder when
+# the current source has no data for it
+# Usage: render_window <usage key> <label> <reset style>
+render_window() {
+    local pct reset_iso reset_str color bar
+    pct=$(echo "$usage_data" | jq -r ".$1.utilization // empty" 2>/dev/null)
+    if [ -z "$pct" ]; then
+        line2+="${sep}${dim}-% ░░░░░░░░${reset} ${white}$2${reset}"
+        return
     fi
-else
-    # No valid usage data — show placeholders
-    line2+="${sep}${dim}-% ░░░░░░░░${reset} ${white}H${reset}"
-    line2+="${sep}${dim}-% ░░░░░░░░${reset} ${white}W${reset}"
+    pct=$(echo "$pct" | awk '{printf "%.0f", $1}')
+    reset_iso=$(echo "$usage_data" | jq -r ".$1.resets_at // empty")
+    reset_str=$(format_reset_time "$reset_iso" "$3")
+    color=$(usage_color "$pct")
+
+    bar=$(progress_bar "$pct" 8 "$color")
+    line2+="${sep}${color}${pct}%${reset} ${bar} ${white}$2${reset}"
+    [ -n "$reset_str" ] && line2+=" ${dim}${reset_str}${reset}"
+}
+
+render_window five_hour H time      # 5-hour (current)
+render_window seven_day W datetime  # 7-day (weekly)
+
+# ---- Extra usage ----
+extra_enabled=$(echo "$usage_data" | jq -r '.extra_usage.is_enabled // false')
+if [ "$extra_enabled" = "true" ]; then
+    extra_pct=$(echo "$usage_data" | jq -r '.extra_usage.utilization // 0' | awk '{printf "%.0f", $1}')
+    extra_used=$(echo "$usage_data" | jq -r '.extra_usage.used_credits // 0' | LC_NUMERIC=C awk '{printf "%.2f", $1/100}')
+    extra_limit=$(echo "$usage_data" | jq -r '.extra_usage.monthly_limit // 0' | LC_NUMERIC=C awk '{printf "%.2f", $1/100}')
+    # Validate: if values are empty or contain unexpanded variables, show simple "enabled" label
+    if [ -n "$extra_used" ] && [ -n "$extra_limit" ] && [[ "$extra_used" != *'$'* ]] && [[ "$extra_limit" != *'$'* ]]; then
+        extra_color=$(usage_color "$extra_pct")
+        extra_bar=$(progress_bar "$extra_pct" 6 "$extra_color")
+        line2+="${sep}${extra_color}${extra_pct}%${reset} ${extra_bar} ${white}E${reset} ${dim}\$${extra_used}/\$${extra_limit}${reset}"
+    else
+        line2+="${sep}${white}E${reset} ${green}on${reset}"
+    fi
 fi
 
 # ===== Multi-line memo (set via /setmemo) =====
@@ -484,14 +543,6 @@ fi
 # Lookup order:
 #   1. session-${session_id}.txt  — explicit session-scoped memo (/setmemo --session …)
 #   2. cwd-${hash}.txt            — directory-scoped memo (/setmemo …), survives /clear
-sha_short16() {
-    if command -v shasum >/dev/null 2>&1; then
-        printf '%s' "$1" | shasum -a 256 | awk '{print $1}' | cut -c1-16
-    elif command -v sha256sum >/dev/null 2>&1; then
-        printf '%s' "$1" | sha256sum | awk '{print $1}' | cut -c1-16
-    fi
-}
-
 memo_lines=""
 memo_file=""
 if [ -n "$session_id" ]; then

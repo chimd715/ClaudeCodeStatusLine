@@ -12,7 +12,7 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 | Segment | Description |
 |---------|-------------|
 | 🧠 | Shown only when extended thinking is enabled |
-| **Model** | Current model name (e.g., Opus 4.7) |
+| **Model** | Current model name, with `(1M context)` shortened to `1M` (e.g., `Opus 4.7 1M`) |
 | **AI Title** | Claude Code's auto-generated session title (truncated to 50 chars) |
 | ✓ **Todo** | Completed / total todos for the current session, when any exist |
 | **Duration** | Human-readable session duration (e.g., `8m 13s`, `2H 05m`) |
@@ -24,7 +24,7 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 | **Effort** | Active reasoning effort level (low / med / high / xhigh / max) |
 | **Tokens** | Used / total context window tokens |
 | **H** | 5-hour rate limit: percentage, progress bar, time left until reset (e.g., `2H 05m left`) |
-| **W** | Weekly (7-day) rate limit: percentage, progress bar, reset date/time (e.g., `10/05 17:59`) — switches to time left within 24h of the reset |
+| **W** | Weekly (7-day) rate limit: percentage, progress bar, reset date/time (e.g., `Mon 10/05 17:59`) — switches to time left within 24h of the reset |
 | **E** | Extra usage: percentage, progress bar, credits spent / limit (if enabled) |
 
 **Line 3 — Project, label & version**
@@ -47,8 +47,8 @@ Usage percentages are color-coded: green (<50%) → yellow (≥50%) → orange (
 
 | Value | 5-hour (H) | Weekly (W) |
 |-------|------------|------------|
-| `countdown` *(default)* | `4H 12m left` | `10/05 17:59`, then `18H 30m left` within 24h of the reset |
-| `clock` | `21:00` | `10/05 17:59` |
+| `countdown` *(default)* | `4H 12m left` | `Mon 10/05 17:59`, then `18H 30m left` within 24h of the reset |
+| `clock` | `21:00` | `Mon 10/05 17:59` |
 
 Set it in the `env` block of `~/.claude/settings.json` (Claude Code passes it to the statusline command):
 
@@ -209,9 +209,19 @@ After installation, restart Claude Code (or open a new session).
 
 3. Restart Claude Code.
 
-## Caching
+## Usage data & caching
 
-Usage data from the Anthropic API is cached for 60 seconds at `/tmp/claude/statusline-usage-cache.json` to avoid excessive API calls. The cache is shared across all Claude Code instances.
+The **H** / **W** segments come from the first source that has data:
+
+1. **`rate_limits` in Claude Code's statusline JSON** — live on every render, no OAuth token or network needed.
+2. **Cached fallback** — whichever is newer of the last `rate_limits` snapshot and the Anthropic OAuth usage API cache. Used when Claude Code omits `rate_limits`, or reports every window at 0% with no reset time (usually a failed fetch on Claude's side; a genuine 0% after a reset still carries a reset time and is shown as-is).
+
+The OAuth usage API is still polled at most once every 60 seconds, because extra usage (**E**) is only exposed there. The cache is shared across all Claude Code instances; the first instance to find it stale claims the refresh so the others don't fetch at the same time, and a failed fetch doesn't block the next retry.
+
+Cache files live in `/tmp/claude/` (`%TEMP%\claude\` on Windows) and are keyed by a hash of the config directory, so accounts run under different `CLAUDE_CONFIG_DIR`s don't mix:
+
+- `statusline-usage-cache-<hash>.json` — OAuth usage API response
+- `statusline-usage-builtin-<hash>.json` — last `rate_limits` snapshot
 
 ## License
 
