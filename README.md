@@ -13,7 +13,7 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 |---------|-------------|
 | 🧠 | Shown only when extended thinking is enabled |
 | **Model** | Current model name, with `(1M context)` shortened to `1M` (e.g., `Opus 4.7 1M`) |
-| **AI Title** | Claude Code's auto-generated session title (truncated to 50 chars) |
+| **AI Title** | The session title set with `/rename`, falling back to Claude Code's auto-generated title (truncated to 50 chars) |
 | ✓ **Todo** | Completed / total todos for the current session, when any exist |
 | **Duration** | Human-readable session duration (e.g., `8m 13s`, `2H 05m`) |
 

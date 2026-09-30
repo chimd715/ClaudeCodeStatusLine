@@ -151,12 +151,17 @@ elif [ -f "$settings_path" ]; then
     [ -n "$effort_val" ] && effort_level="$effort_val"
 fi
 
-# ===== AI-generated session title (from transcript) =====
+# ===== Session title (from transcript: /rename custom-title, else ai-title) =====
 ai_title=""
 transcript_path=$(echo "$input" | jq -r '.transcript_path // empty')
 if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
-    ai_title=$(grep '"type":"ai-title"' "$transcript_path" 2>/dev/null | tail -1 | \
-        jq -r '.aiTitle // empty' 2>/dev/null)
+    # Prefer the user-set /rename title (custom-title) over the auto-generated ai-title
+    ai_title=$(grep '"type":"custom-title"' "$transcript_path" 2>/dev/null | tail -1 | \
+        jq -r '.customTitle // empty' 2>/dev/null)
+    if [ -z "$ai_title" ]; then
+        ai_title=$(grep '"type":"ai-title"' "$transcript_path" 2>/dev/null | tail -1 | \
+            jq -r '.aiTitle // empty' 2>/dev/null)
+    fi
 fi
 
 # ===== Todo progress (done/total from latest session todo file) =====

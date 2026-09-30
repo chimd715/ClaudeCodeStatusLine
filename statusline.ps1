@@ -142,15 +142,24 @@ if ($data.effort.level) {
     }
 }
 
-# ===== AI-generated session title (from transcript) =====
+# ===== Session title (from transcript: /rename custom-title, else ai-title) =====
 $aiTitle = ""
 if ($transcriptPath -and (Test-Path $transcriptPath)) {
     try {
-        $lastAiTitleLine = Select-String -Path $transcriptPath -Pattern '"type":"ai-title"' -SimpleMatch |
+        # Prefer the user-set /rename title (custom-title) over the auto-generated ai-title
+        $lastCustomTitleLine = Select-String -Path $transcriptPath -Pattern '"type":"custom-title"' -SimpleMatch |
             Select-Object -Last 1
-        if ($lastAiTitleLine) {
-            $obj = $lastAiTitleLine.Line | ConvertFrom-Json
-            if ($obj.aiTitle) { $aiTitle = $obj.aiTitle }
+        if ($lastCustomTitleLine) {
+            $obj = $lastCustomTitleLine.Line | ConvertFrom-Json
+            if ($obj.customTitle) { $aiTitle = $obj.customTitle }
+        }
+        if (-not $aiTitle) {
+            $lastAiTitleLine = Select-String -Path $transcriptPath -Pattern '"type":"ai-title"' -SimpleMatch |
+                Select-Object -Last 1
+            if ($lastAiTitleLine) {
+                $obj = $lastAiTitleLine.Line | ConvertFrom-Json
+                if ($obj.aiTitle) { $aiTitle = $obj.aiTitle }
+            }
         }
     } catch {}
 }
