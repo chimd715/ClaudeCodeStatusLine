@@ -60,6 +60,18 @@ Set it in the `env` block of `~/.claude/settings.json` (Claude Code passes it to
 }
 ```
 
+Clock times use the system's local time zone. To show them in another zone, set `STATUSLINE_TZ` to an IANA zone name the same way. It applies only to the statusline, whereas setting `TZ` in the `env` block would change the time zone of every command Claude Code runs:
+
+```json
+{
+  "env": {
+    "STATUSLINE_TZ": "Asia/Seoul"
+  }
+}
+```
+
+On Windows, IANA names need PowerShell 7+; Windows PowerShell 5.1 takes Windows zone ids such as `Korea Standard Time`. A misspelled zone shows UTC on Linux/macOS and local time on Windows.
+
 ## Per-session label and memo
 
 Two slash commands attach session-scoped text to the statusline:

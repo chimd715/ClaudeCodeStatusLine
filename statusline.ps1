@@ -435,6 +435,14 @@ if ($effectiveBuiltin) {
 $resetStyle = if ($env:STATUSLINE_RESET_STYLE) { $env:STATUSLINE_RESET_STYLE } else { "countdown" }
 $countdownWindowSec = 86400
 
+# Time zone for reset clock times (set via settings.json → "env": {"STATUSLINE_TZ": "Asia/Seoul"}).
+# IANA ids need PowerShell 7+ (Windows PowerShell 5.1 takes Windows ids like "Korea Standard Time");
+# an unknown id falls back to local time.
+$resetTimeZone = $null
+if ($env:STATUSLINE_TZ) {
+    try { $resetTimeZone = [TimeZoneInfo]::FindSystemTimeZoneById($env:STATUSLINE_TZ) } catch {}
+}
+
 # Format seconds until reset as "4H 12m left" / "35m left"
 # Minutes round up so the last partial minute still reads "1m left".
 function Format-TimeLeft([long]$secs) {
@@ -456,7 +464,7 @@ function Format-ResetTime($resetsAt, [string]$style) {
             $secsLeft = [long][math]::Floor(($resetAt - [DateTimeOffset]::Now).TotalSeconds)
             if ($secsLeft -lt $countdownWindowSec) { return Format-TimeLeft $secsLeft }
         }
-        $dt = $resetAt.LocalDateTime
+        $dt = if ($resetTimeZone) { [TimeZoneInfo]::ConvertTime($resetAt, $resetTimeZone).DateTime } else { $resetAt.LocalDateTime }
         switch ($style) {
             "time"     { return $dt.ToString("HH:mm") }
             "datetime" { return $dt.ToString("ddd MM/dd HH:mm", [System.Globalization.CultureInfo]::InvariantCulture) }

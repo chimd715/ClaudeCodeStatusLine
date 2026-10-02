@@ -442,6 +442,10 @@ iso_to_epoch() {
 reset_style="${STATUSLINE_RESET_STYLE:-countdown}"
 countdown_window=86400  # seconds
 
+# Time zone for reset clock times (set via settings.json → "env": {"STATUSLINE_TZ": "Asia/Seoul"}).
+# Scoped to this script, unlike setting TZ itself, which would also change every command Claude Code runs.
+[ -n "$STATUSLINE_TZ" ] && export TZ="$STATUSLINE_TZ"
+
 # Format seconds until reset as "4H 12m left" / "35m left"
 # Minutes round up so the last partial minute still reads "1m left".
 format_time_left() {
