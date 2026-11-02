@@ -1,7 +1,7 @@
 #!/bin/bash
 # Output:
 #   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
-#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W Fri 03/20 14:00 | E $5/$50
+#   Line 2: [⚡] Effort Tokens | 23% ████░░░░ W Fri 03/20 14:00 | E $5/$50
 #   Line 3: Dir | Branch changes | [/setmsg session label] | vX.Y.Z
 #   Line 4+: Optional multi-line memo set via /setmemo
 
@@ -217,7 +217,7 @@ if [ -n "$cwd" ]; then
     fi
 fi
 
-# Line 2: [⚡] Effort Tokens | H | W | Extra
+# Line 2: [⚡] Effort Tokens | W | Extra
 [ "$fast_mode" = "true" ] && line2+="⚡ "
 case "$effort_level" in
     low)    line2+="${dim}low${reset} " ;;
@@ -358,8 +358,10 @@ if $needs_refresh; then
             -H "anthropic-beta: oauth-2025-04-20" \
             -H "User-Agent: claude-code/2.1.34" \
             "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-        # Only cache valid usage responses (not error/rate-limit JSON)
-        if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
+        # Only cache valid usage responses (not error/rate-limit JSON).
+        # Claude dropped the 5-hour window, so five_hour now comes back null — key on seven_day.
+        # if [ -n "$response" ] && echo "$response" | jq -e '.five_hour' >/dev/null 2>&1; then
+        if [ -n "$response" ] && echo "$response" | jq -e '.seven_day' >/dev/null 2>&1; then
             usage_data="$response"
             echo "$response" > "$cache_file"
         fi
@@ -369,7 +371,8 @@ if $needs_refresh; then
     [ -f "$cache_file" ] && [ ! -s "$cache_file" ] && rm -f "$cache_file"
 fi
 
-echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>&1 || usage_data=""
+# echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>&1 || usage_data=""
+echo "$usage_data" | jq -e '.seven_day' >/dev/null 2>&1 || usage_data=""
 
 # Normalize stdin rate_limits into the API response shape (epoch resets_at → ISO) so one
 # renderer serves every source; a window missing from stdin is filled from the API cache.
@@ -381,10 +384,11 @@ builtin_data=$(echo "$input" | jq -c --argjson cached "${usage_data:-null}" '
         {utilization: $w.used_percentage,
          resets_at: ($w.resets_at | if type == "number" and . > 0 then todate else null end)} end;
     (.rate_limits // {}) as $rl
-    | [$rl.five_hour, $rl.seven_day] | map(select(.used_percentage != null))
+    # | [$rl.five_hour, $rl.seven_day] | map(select(.used_percentage != null))
+    | [$rl.seven_day] | map(select(.used_percentage != null))
     | if length > 0 and any(.used_percentage > 0 or ((.resets_at | type) == "number" and .resets_at > 0))
-      then {five_hour: (win($rl.five_hour) // $cached.five_hour),
-            seven_day: (win($rl.seven_day) // $cached.seven_day),
+      # then {five_hour: (win($rl.five_hour) // $cached.five_hour),
+      then {seven_day: (win($rl.seven_day) // $cached.seven_day),
             extra_usage: $cached.extra_usage}
       else empty end
 ' 2>/dev/null)
@@ -396,7 +400,7 @@ if [ -n "$builtin_data" ]; then
 elif [ -s "$builtin_cache_file" ] && \
      { [ -z "$usage_data" ] || [ "$(file_mtime "$builtin_cache_file")" -gt "$(file_mtime "$cache_file")" ]; }; then
     snapshot=$(cat "$builtin_cache_file" 2>/dev/null)
-    echo "$snapshot" | jq -e '.five_hour or .seven_day' >/dev/null 2>&1 && usage_data="$snapshot"
+    echo "$snapshot" | jq -e '.seven_day' >/dev/null 2>&1 && usage_data="$snapshot"
 fi
 
 # Cross-platform ISO to epoch conversion
@@ -506,7 +510,7 @@ format_reset_time() {
 
 sep=" ${dim}|${reset} "
 
-# Append one rate-limit window ("45% ████░░░░ H 2H 05m left"), or a placeholder when
+# Append one rate-limit window ("23% ████░░░░ W Fri 03/20 14:00"), or a placeholder when
 # the current source has no data for it
 # Usage: render_window <usage key> <label> <reset style>
 render_window() {
@@ -526,7 +530,7 @@ render_window() {
     [ -n "$reset_str" ] && line2+=" ${dim}${reset_str}${reset}"
 }
 
-render_window five_hour H time      # 5-hour (current)
+# render_window five_hour H time      # 5-hour (current) — window removed by Claude
 render_window seven_day W datetime  # 7-day (weekly)
 
 # ---- Extra usage ----

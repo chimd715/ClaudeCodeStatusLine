@@ -1,6 +1,6 @@
 # Three lines:
 #   Line 1: [🧠] Model | ai-title | ✓ done/total | session-duration
-#   Line 2: [⚡] Effort Tokens | 45% ████░░░░ H 2H 05m left | 23% ████░░░░ W Fri 03/20 14:00 | E $5/$50
+#   Line 2: [⚡] Effort Tokens | 23% ████░░░░ W Fri 03/20 14:00 | E $5/$50
 #   Line 3: Dir | Branch changes | vX.Y.Z
 
 # Read input from stdin
@@ -234,7 +234,7 @@ if ($cwd) {
     }
 }
 
-# Line 2: [⚡] Effort Tokens | H | W | Extra
+# Line 2: [⚡] Effort Tokens | W | Extra
 if ($fastMode) { $line2 += "⚡ " }
 switch ($effortLevel) {
     "low"    { $line2 += "${dim}low${reset} " }
@@ -335,7 +335,8 @@ if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -
 function Read-UsageFile([string]$path) {
     try {
         $u = Get-Content $path -Raw -ErrorAction Stop | ConvertFrom-Json
-        if ($u.five_hour -or $u.seven_day) { return $u }
+        # if ($u.five_hour -or $u.seven_day) { return $u }
+        if ($u.seven_day) { return $u }
     } catch {}
     return $null
 }
@@ -370,8 +371,10 @@ if ($needsRefresh) {
             }
             $response = Invoke-RestMethod -Uri "https://api.anthropic.com/api/oauth/usage" `
                 -Headers $headers -Method Get -TimeoutSec 10 -ErrorAction Stop
-            # Only cache valid usage responses (not error/rate-limit JSON)
-            if ($response.five_hour) {
+            # Only cache valid usage responses (not error/rate-limit JSON).
+            # Claude dropped the 5-hour window, so five_hour now comes back null - key on seven_day.
+            # if ($response.five_hour) {
+            if ($response.seven_day) {
                 $response | ConvertTo-Json -Depth 10 | Set-Content $cacheFile -Force
                 $usage = $response
             }
@@ -403,7 +406,8 @@ function Convert-RateLimitWindow($w) {
 # reset still carries resets_at and is trusted.
 $rateLimits = $data.rate_limits
 $effectiveBuiltin = $false
-foreach ($w in @($rateLimits.five_hour, $rateLimits.seven_day)) {
+# foreach ($w in @($rateLimits.five_hour, $rateLimits.seven_day)) {
+foreach ($w in @($rateLimits.seven_day)) {
     if ($null -eq $w -or $null -eq $w.used_percentage) { continue }
     try {
         if ([double]$w.used_percentage -gt 0 -or [long]$w.resets_at -gt 0) { $effectiveBuiltin = $true }
@@ -413,7 +417,7 @@ foreach ($w in @($rateLimits.five_hour, $rateLimits.seven_day)) {
 if ($effectiveBuiltin) {
     # A window missing from stdin is filled from the API cache; extra_usage always is
     $builtinUsage = [pscustomobject]@{
-        five_hour   = Coalesce (Convert-RateLimitWindow $rateLimits.five_hour) $usage.five_hour
+        # five_hour   = Coalesce (Convert-RateLimitWindow $rateLimits.five_hour) $usage.five_hour
         seven_day   = Coalesce (Convert-RateLimitWindow $rateLimits.seven_day) $usage.seven_day
         extra_usage = $usage.extra_usage
     }
@@ -475,7 +479,7 @@ function Format-ResetTime($resetsAt, [string]$style) {
 
 $sep = " ${dim}|${reset} "
 
-# Append one rate-limit window ("45% ████░░░░ H 2H 05m left"), or a placeholder when
+# Append one rate-limit window ("23% ████░░░░ W Fri 03/20 14:00"), or a placeholder when
 # the current source has no data for it
 function Format-UsageWindow($window, [string]$label, [string]$style) {
     if ($null -eq $window -or $null -eq $window.utilization) {
@@ -491,7 +495,7 @@ function Format-UsageWindow($window, [string]$label, [string]$style) {
     return $segment
 }
 
-$line2 += Format-UsageWindow $usage.five_hour "H" "time"      # 5-hour (current)
+# $line2 += Format-UsageWindow $usage.five_hour "H" "time"      # 5-hour (current) - window removed by Claude
 $line2 += Format-UsageWindow $usage.seven_day "W" "datetime"  # 7-day (weekly)
 
 try {

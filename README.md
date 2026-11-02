@@ -23,7 +23,6 @@ A custom status line for [Claude Code](https://claude.com/claude-code) that disp
 | ⚡ | Shown only when `/fast` mode is active |
 | **Effort** | Active reasoning effort level (low / med / high / xhigh / max) |
 | **Tokens** | Used / total context window tokens |
-| **H** | 5-hour rate limit: percentage, progress bar, time left until reset (e.g., `2H 05m left`) |
 | **W** | Weekly (7-day) rate limit: percentage, progress bar, reset date/time (e.g., `Mon 10/05 17:59`) — switches to time left within 24h of the reset |
 | **E** | Extra usage: percentage, progress bar, credits spent / limit (if enabled) |
 
@@ -43,12 +42,14 @@ Usage percentages are color-coded: green (<50%) → yellow (≥50%) → orange (
 
 ### Reset time format
 
-`STATUSLINE_RESET_STYLE` controls how the **H** and **W** reset times are shown:
+`STATUSLINE_RESET_STYLE` controls how the **W** reset time are shown:
 
-| Value | 5-hour (H) | Weekly (W) |
-|-------|------------|------------|
-| `countdown` *(default)* | `4H 12m left` | `Mon 10/05 17:59`, then `18H 30m left` within 24h of the reset |
-| `clock` | `21:00` | `Mon 10/05 17:59` |
+| Value | Weekly (W) |
+|-------|------------|
+| `countdown` *(default)* | `Mon 10/05 17:59`, then `18H 30m left` within 24h of the reset |
+| `clock` | `Mon 10/05 17:59` |
+
+The 5-hour (**H**) window was removed because Claude no longer reports it (`five_hour` is `null` in the usage API).
 
 Set it in the `env` block of `~/.claude/settings.json` (Claude Code passes it to the statusline command):
 
@@ -223,7 +224,7 @@ After installation, restart Claude Code (or open a new session).
 
 ## Usage data & caching
 
-The **H** / **W** segments come from the first source that has data:
+The **W** segment comes from the first source that has data:
 
 1. **`rate_limits` in Claude Code's statusline JSON** — live on every render, no OAuth token or network needed.
 2. **Cached fallback** — whichever is newer of the last `rate_limits` snapshot and the Anthropic OAuth usage API cache. Used when Claude Code omits `rate_limits`, or reports every window at 0% with no reset time (usually a failed fetch on Claude's side; a genuine 0% after a reset still carries a reset time and is shown as-is).
